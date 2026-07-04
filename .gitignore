@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ローカル設定(APIキー等)— コミット禁止
+config/settings.json
+
+# 株価・銘柄リストのキャッシュ
+cache/
