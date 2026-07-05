@@ -56,30 +56,29 @@
   button.danger { background: transparent; color: var(--up); padding: 4px 8px; }
   button:disabled { opacity: 0.5; }
   .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-  .progress { margin-top: 10px; font-size: 0.9rem; color: var(--sub); }
-  .bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
-  .bar > div { height: 100%; background: var(--accent); width: 0%; transition: width .3s; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { padding: 8px 6px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
-  th { color: var(--sub); font-weight: 600; position: sticky; top: 0; background: var(--card); }
-  .table-wrap { overflow-x: auto; max-height: 60vh; overflow-y: auto; }
+  th { color: var(--sub); font-weight: 600; position: sticky; top: 0; background: var(--card); cursor: pointer; }
+  .table-wrap { overflow-x: auto; max-height: 62vh; overflow-y: auto; }
   .pos { color: var(--up); } .neg { color: var(--down); }
   .name { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 0.7rem; color: var(--sub); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
   .err { color: var(--up); font-size: 0.85rem; margin-top: 8px; }
   .ok { color: var(--down); font-size: 0.85rem; margin-top: 8px; }
-  details summary { font-size: 0.9rem; color: var(--sub); padding: 6px 0; }
+  details summary { font-size: 0.9rem; color: var(--sub); padding: 6px 0; cursor: pointer; }
 </style>
 </head>
 <body>
 <h1>📈 株スクリーニング</h1>
-<div class="sub">基準日: <span id="baseDate">読み込み中...</span>(東証上場銘柄)</div>
+<div class="sub" id="meta">データ読み込み中...</div>
 
 <div class="card">
   <h2>対象</h2>
   <label class="chk"><input type="checkbox" id="catStock" checked> 株</label>
   <label class="chk"><input type="checkbox" id="catTrust"> 信託(REIT等)</label>
   <label class="chk"><input type="checkbox" id="catEtf"> ETF</label>
+  <label class="chk"><input type="checkbox" id="catCommodity"> 純金信託・商品</label>
 </div>
 
 <div class="card">
@@ -95,19 +94,13 @@
   <details style="margin-top:10px">
     <summary>🤖 自然言語で条件を指定(要 API キー)</summary>
     <textarea id="nlText" placeholder="例: 3ヶ月連続で10%以上上昇、株価は500円から3000円"></textarea>
-    <div class="row">
-      <button class="small" onclick="parseNL()" id="nlBtn">条件に変換</button>
-    </div>
+    <div class="row"><button class="small" onclick="parseNL()" id="nlBtn">条件に変換</button></div>
     <div id="nlMsg"></div>
   </details>
 </div>
 
 <div class="card">
   <button class="primary" id="runBtn" onclick="runScreen()">スクリーニング実行</button>
-  <div class="progress" id="progress" hidden>
-    <span id="progText"></span>
-    <div class="bar"><div id="progBar"></div></div>
-  </div>
   <div class="err" id="runErr"></div>
 </div>
 
@@ -116,10 +109,11 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>コード</th><th>銘柄名</th><th>終値</th>
-        <th onclick="sortBy('return_3m')">3ヶ月↕</th>
-        <th onclick="sortBy('return_1m')">1ヶ月↕</th>
-        <th onclick="sortBy('return_1w')">1週間↕</th>
+        <th onclick="sortBy('code')">コード</th><th>銘柄名</th>
+        <th onclick="sortBy('close')">終値</th>
+        <th onclick="sortBy('r3')">3ヶ月</th>
+        <th onclick="sortBy('r1')">1ヶ月</th>
+        <th onclick="sortBy('rw')">1週間</th>
       </tr></thead>
       <tbody id="resultBody"></tbody>
     </table>
@@ -129,7 +123,7 @@
 <div class="card">
   <details>
     <summary>⚙️ 設定(Anthropic API キー)</summary>
-    <p class="sub" style="margin:8px 0">キーはサーバーのローカル(config/settings.json)にのみ保存されます。自然言語変換機能を使わない場合は不要です。</p>
+    <p class="sub" style="margin:8px 0">自然言語変換に使用します。キーはこの端末のブラウザ(localStorage)にのみ保存され、変換時に直接 Anthropic API へ送信されます。使わない場合は不要です。</p>
     <div class="row">
       <input type="password" id="apiKey" placeholder="sk-ant-..." style="flex:1">
       <button class="small" onclick="saveKey()">保存</button>
@@ -138,10 +132,13 @@
   </details>
 </div>
 
+<script src="conditions.js"></script>
 <script>
+const CATS = { stock: '株', trust: '信託', etf: 'ETF', commodity: '商品' };
+let DATA = null;
 const CONDS = [];
 let RESULTS = [];
-let sortKey = 'return_3m', sortDesc = true;
+let sortKey = 'r3', sortDesc = true;
 
 const DEFS = {
   consecutive_monthly_gain: { label: '連続月間上昇', make: () => ({type:'consecutive_monthly_gain', months:3, min_pct:10}) },
@@ -151,10 +148,7 @@ const DEFS = {
   min_avg_volume:           { label: '平均出来高', make: () => ({type:'min_avg_volume', days:20, min_volume:100000}) },
 };
 
-function addCond(type, preset) {
-  CONDS.push(preset || DEFS[type].make());
-  renderConds();
-}
+function addCond(type, preset) { CONDS.push(preset || DEFS[type].make()); renderConds(); }
 function delCond(i) { CONDS.splice(i, 1); renderConds(); }
 
 function num(c, key, opts) {
@@ -185,7 +179,9 @@ function renderConds() {
     else if (c.type === 'price_range')
       body = `終値が ${num(c,'min')} 円 〜 ${num(c,'max')} 円`;
     else if (c.type === 'min_avg_volume')
-      body = `直近 ${num(c,'days')} 日の平均出来高が ${num(c,'min_volume')} 以上`;
+      body = `直近 <select onchange="CONDS[${i}].days=Number(this.value)">
+          ${[5,20,60].map(d=>`<option value="${d}" ${c.days===d?'selected':''}>${d}</option>`).join('')}
+        </select> 日の平均出来高が ${num(c,'min_volume')} 以上`;
     el.insertAdjacentHTML('beforeend', `
       <div class="cond">
         <div class="cond-head">
@@ -197,61 +193,28 @@ function renderConds() {
   });
 }
 
-function categories() {
+function selectedCats() {
   const cats = [];
   if (document.getElementById('catStock').checked) cats.push('stock');
   if (document.getElementById('catTrust').checked) cats.push('trust');
   if (document.getElementById('catEtf').checked) cats.push('etf');
+  if (document.getElementById('catCommodity').checked) cats.push('commodity');
   return cats;
 }
 
-async function runScreen() {
+function runScreen() {
   const errEl = document.getElementById('runErr');
   errEl.textContent = '';
+  if (!DATA) { errEl.textContent = 'データが読み込まれていません'; return; }
   const conds = CONDS.map(({_i, ...c}) => c);
   if (conds.length === 0) { errEl.textContent = '条件を1つ以上追加してください'; return; }
-  if (categories().length === 0) { errEl.textContent = '対象を選択してください'; return; }
+  const cats = selectedCats();
+  if (cats.length === 0) { errEl.textContent = '対象を選択してください'; return; }
 
-  const btn = document.getElementById('runBtn');
-  btn.disabled = true;
-  document.getElementById('progress').hidden = false;
-  document.getElementById('progText').textContent = '銘柄リスト取得中...';
-
-  try {
-    const res = await fetch('/api/screen', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ categories: categories(), conditions: conds }),
-    });
-    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-    const { job_id } = await res.json();
-    await pollJob(job_id);
-  } catch (e) {
-    errEl.textContent = 'エラー: ' + e.message;
-  } finally {
-    btn.disabled = false;
-    document.getElementById('progress').hidden = true;
-  }
-}
-
-async function pollJob(jobId) {
-  while (true) {
-    await new Promise(r => setTimeout(r, 1500));
-    const res = await fetch('/api/screen/' + jobId);
-    const job = await res.json();
-    if (job.status === 'running') {
-      const { progress, total } = job;
-      document.getElementById('progText').textContent =
-        total ? `株価取得中... ${progress} / ${total} 銘柄` : '準備中...';
-      document.getElementById('progBar').style.width =
-        total ? (100 * progress / total) + '%' : '0%';
-    } else if (job.status === 'done') {
-      RESULTS = job.results;
-      renderResults();
-      return;
-    } else {
-      throw new Error(job.error || '不明なエラー');
-    }
-  }
+  RESULTS = DATA.stocks.filter(
+    (s) => cats.includes(s.cat) && ScreenConditions.evaluateConditions(s, conds)
+  );
+  renderResults();
 }
 
 function fmtPct(v) {
@@ -268,68 +231,106 @@ function sortBy(key) {
 
 function renderResults() {
   const rows = [...RESULTS].sort((a, b) => {
-    const x = a[sortKey] ?? -1e9, y = b[sortKey] ?? -1e9;
+    let x = a[sortKey], y = b[sortKey];
+    if (sortKey === 'code') { x = a.code; y = b.code; return sortDesc ? y.localeCompare(x) : x.localeCompare(y); }
+    x = x ?? -1e9; y = y ?? -1e9;
     return sortDesc ? y - x : x - y;
   });
   document.getElementById('resultCard').hidden = false;
   document.getElementById('resultCount').textContent = `${rows.length} 銘柄`;
   document.getElementById('resultBody').innerHTML = rows.map(r => `
     <tr>
-      <td>${r.code}</td>
+      <td>${r.code} <span class="tag">${CATS[r.cat]||r.cat}</span></td>
       <td class="name">${r.name}</td>
-      <td>${r.close.toLocaleString()}</td>
-      <td>${fmtPct(r.return_3m)}</td>
-      <td>${fmtPct(r.return_1m)}</td>
-      <td>${fmtPct(r.return_1w)}</td>
+      <td>${r.close != null ? r.close.toLocaleString() : '-'}</td>
+      <td>${fmtPct(r.r3)}</td>
+      <td>${fmtPct(r.r1)}</td>
+      <td>${fmtPct(r.rw)}</td>
     </tr>`).join('');
 }
+
+// ---- 自然言語 → 条件(Anthropic API 直接呼び出し / model-routing: haiku) ----
+const NL_SCHEMA = {
+  type: "object",
+  properties: { conditions: { type: "array", items: {
+    type: "object",
+    properties: {
+      type: { type: "string", enum: ["consecutive_monthly_gain","rise_from_recent_low","period_return","price_range","min_avg_volume"] },
+      months: { type: ["integer","null"] }, min_pct: { type: ["number","null"] },
+      lookback_months: { type: ["integer","null"] },
+      period: { type: ["string","null"], enum: ["3m","1m","1w",null] },
+      op: { type: ["string","null"], enum: [">=","<=",null] }, pct: { type: ["number","null"] },
+      min: { type: ["number","null"] }, max: { type: ["number","null"] },
+      days: { type: ["integer","null"], enum: [5,20,60,null] }, min_volume: { type: ["number","null"] },
+    },
+    required: ["type"], additionalProperties: false,
+  } } },
+  required: ["conditions"], additionalProperties: false,
+};
+const NL_SYSTEM = `あなたは株式スクリーニング条件のパーサーです。日本語の条件文を指定スキーマの JSON 条件リストに変換してください。
+条件タイプ: consecutive_monthly_gain(N ヶ月連続で毎月 min_pct% 以上上昇: months,min_pct)/ rise_from_recent_low(直近 lookback_months ヶ月の安値から min_pct% 以上上昇)/ period_return(期間 period[3m/1m/1w] の騰落率が op[>=/<=] pct%)/ price_range(株価 min〜max 円)/ min_avg_volume(直近 days[5/20/60] 日の平均出来高が min_volume 以上)。
+使わないフィールドは null。解釈できない要素は無視し、確実に読み取れた条件のみ出力。`;
 
 async function parseNL() {
   const msg = document.getElementById('nlMsg');
   const btn = document.getElementById('nlBtn');
   const text = document.getElementById('nlText').value.trim();
   if (!text) return;
-  msg.className = ''; msg.textContent = '変換中...';
-  btn.disabled = true;
+  const key = localStorage.getItem('anthropic_api_key');
+  if (!key) { msg.className='err'; msg.textContent='先に設定から API キーを保存してください'; return; }
+  msg.className=''; msg.textContent='変換中...'; btn.disabled = true;
   try {
-    const res = await fetch('/api/parse_condition', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text }),
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5', max_tokens: 1024, system: NL_SYSTEM,
+        output_config: { format: { type: 'json_schema', schema: NL_SCHEMA } },
+        messages: [{ role: 'user', content: text }],
+      }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || res.statusText);
-    if (data.conditions.length === 0) throw new Error('条件を読み取れませんでした');
-    data.conditions.forEach(c => CONDS.push(c));
+    if (!res.ok) throw new Error(data.error?.message || res.statusText);
+    const raw = data.content.find(b => b.type === 'text').text;
+    const conds = (JSON.parse(raw).conditions || [])
+      .map(c => Object.fromEntries(Object.entries(c).filter(([, v]) => v !== null)));
+    if (conds.length === 0) throw new Error('条件を読み取れませんでした');
+    conds.forEach(c => CONDS.push(c));
     renderConds();
-    msg.className = 'ok';
-    msg.textContent = `${data.conditions.length} 件の条件を追加しました`;
+    msg.className='ok'; msg.textContent = `${conds.length} 件の条件を追加しました`;
   } catch (e) {
-    msg.className = 'err';
-    msg.textContent = e.message;
-  } finally {
-    btn.disabled = false;
-  }
+    msg.className='err'; msg.textContent = '変換失敗: ' + e.message;
+  } finally { btn.disabled = false; }
 }
 
-async function saveKey() {
+function saveKey() {
   const key = document.getElementById('apiKey').value.trim();
   const msg = document.getElementById('keyMsg');
   if (!key) return;
-  const res = await fetch('/api/settings', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ api_key: key }),
-  });
-  msg.className = res.ok ? 'ok' : 'err';
-  msg.textContent = res.ok ? '保存しました' : '保存に失敗しました';
+  localStorage.setItem('anthropic_api_key', key);
   document.getElementById('apiKey').value = '';
+  msg.className='ok'; msg.textContent = '保存しました(この端末のみ)';
 }
 
-// 初期化
+// ---- 初期化 ----
 (async () => {
+  const metaEl = document.getElementById('meta');
   try {
-    const res = await fetch('/api/base_date');
-    document.getElementById('baseDate').textContent = (await res.json()).base_date;
-  } catch { document.getElementById('baseDate').textContent = '取得失敗'; }
+    const res = await fetch('./data/screening.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    DATA = await res.json();
+    const c = DATA.counts || {};
+    const parts = Object.keys(CATS).filter(k => c[k]).map(k => `${CATS[k]} ${c[k]}`);
+    metaEl.innerHTML = `基準日: <b>${DATA.base_date}</b>(${DATA.total} 銘柄 / ${parts.join(' ・ ')})<br>更新: ${DATA.generated_at || '-'}`;
+  } catch (e) {
+    metaEl.className = 'err';
+    metaEl.textContent = 'データ未生成です。GitHub Actions の「定期スクリーニング」を実行してください。';
+  }
   addCond('consecutive_monthly_gain');
 })();
 </script>

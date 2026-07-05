@@ -19,10 +19,23 @@ JPX_LIST_URL = (
     "https://www.jpx.co.jp/markets/statistics-equities/misc/"
     "tvdivq0000001vg2-att/data_j.xls"
 )
+USER_AGENT = "Mozilla/5.0 (compatible; StockScreener/1.0)"
 
-# 価格取得に必要な履歴期間(基準日から遡る日数)。3ヶ月条件 + 余裕。
+# 価格取得に必要な履歴期間(基準日から遡る日数)。12ヶ月条件 + 余裕。
 HISTORY_DAYS = 400
 BATCH_SIZE = 200
+
+# 純金信託・コモディティ(商品)を表す名称キーワード。
+# ETF・ETN 区分の銘柄名にこれらが含まれる場合、category を "commodity" とする。
+# 「金融」「銀行」等の誤検出を避けるため、単独の「金」「銀」は使わず具体語のみ。
+COMMODITY_KEYWORDS = [
+    "純金", "金地金", "金価格", "ゴールド", "GOLD",
+    "白金", "プラチナ", "PLATINUM", "パラジウム", "PALLADIUM",
+    "シルバー", "銀価格", "SILVER",
+    "原油", "WTI", "天然ガス", "ガソリン",
+    "コモディティ", "貴金属", "農産物", "穀物",
+    "とうもろこし", "大豆", "小麦", "銅価格", "商品指数", "レアメタル",
+]
 
 
 def _cache_path(name: str) -> Path:
@@ -30,10 +43,16 @@ def _cache_path(name: str) -> Path:
     return CACHE_DIR / name
 
 
-def classify_category(market_segment: str) -> str:
-    """JPX の「市場・商品区分」を stock / etf / trust / other に分類する。"""
+def classify_category(market_segment: str, name: str = "") -> str:
+    """JPX の「市場・商品区分」と銘柄名から分類する。
+
+    戻り値: stock / etf / commodity / trust / other
+    """
     seg = str(market_segment)
+    nm = str(name)
     if "ETF" in seg or "ETN" in seg:
+        if any(k in nm for k in COMMODITY_KEYWORDS):
+            return "commodity"
         return "etf"
     if "REIT" in seg or "ファンド" in seg or "投資信託" in seg:
         return "trust"
@@ -47,7 +66,7 @@ def classify_category(market_segment: str) -> str:
 def fetch_ticker_list(force: bool = False) -> pd.DataFrame:
     """東証上場銘柄一覧を取得して DataFrame で返す。
 
-    列: code(4桁+市場拡張), name, segment, category(stock/etf/trust/other), ticker(yfinance用)
+    列: code, name, segment, category(stock/etf/commodity/trust), ticker(yfinance用)
     1日キャッシュする。
     """
     cache = _cache_path("jpx_list.parquet")
@@ -57,7 +76,7 @@ def fetch_ticker_list(force: bool = False) -> pd.DataFrame:
             return pd.read_parquet(cache)
 
     logger.info("JPX 銘柄リストをダウンロード中...")
-    resp = requests.get(JPX_LIST_URL, timeout=60)
+    resp = requests.get(JPX_LIST_URL, timeout=60, headers={"User-Agent": USER_AGENT})
     resp.raise_for_status()
     raw = pd.read_excel(io.BytesIO(resp.content))
 
@@ -68,11 +87,17 @@ def fetch_ticker_list(force: bool = False) -> pd.DataFrame:
             "segment": raw["市場・商品区分"].astype(str).str.strip(),
         }
     )
-    df["category"] = df["segment"].map(classify_category)
+    df["category"] = [
+        classify_category(seg, nm) for seg, nm in zip(df["segment"], df["name"])
+    ]
     df = df[df["category"] != "other"].reset_index(drop=True)
     df["ticker"] = df["code"] + ".T"
     df.to_parquet(cache)
-    logger.info("銘柄リスト取得完了: %d 銘柄", len(df))
+    logger.info(
+        "銘柄リスト取得完了: %d 銘柄 %s",
+        len(df),
+        df["category"].value_counts().to_dict(),
+    )
     return df
 
 
@@ -150,7 +175,6 @@ def fetch_prices(
         if progress_cb:
             progress_cb(min(i + BATCH_SIZE, total), total)
 
-    # キャッシュ追記保存
     if frames:
         new_df = pd.concat(frames, ignore_index=True)
         if cached is not None:

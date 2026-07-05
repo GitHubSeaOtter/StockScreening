@@ -1,0 +1,43 @@
+name: 定期スクリーニング
+
+on:
+  schedule:
+    # 平日 08:00 UTC = 17:00 JST(東証 15:30 引け後)。日足確定後にデータ生成。
+    - cron: "0 8 * * 1-5"
+  workflow_dispatch: {}  # 手動実行(任意のブランチを選択可)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: screening
+  cancel-in-progress: false
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 依存関係をインストール
+        run: pip install -r requirements.txt
+
+      - name: スクリーニングデータを生成
+        run: python build_dataset.py
+
+      - name: 結果をコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/screening.json
+          if git diff --cached --quiet; then
+            echo "変更なし — コミットをスキップ"
+          else
+            git commit -m "スクリーニング結果を更新 ($(TZ=Asia/Tokyo date +%Y-%m-%d))"
+            git push
+          fi
