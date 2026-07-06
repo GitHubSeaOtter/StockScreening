@@ -16,7 +16,33 @@ from app import data_fetcher, features, market_calendar
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-OUT_PATH = Path(__file__).resolve().parent / "docs" / "data" / "screening.json"
+DATA_DIR = Path(__file__).resolve().parent / "docs" / "data"
+OUT_PATH = DATA_DIR / "screening.json"
+CHARTS_DIR = DATA_DIR / "charts"
+
+# チャート用に保持する日足の最大本数(約1年ぶんの営業日)。
+CHART_MAX_POINTS = 260
+
+
+def write_chart(df, row, base) -> None:
+    """1銘柄の日足チャートデータ(日付・終値・出来高)を JSON で出力する。
+
+    タップ時にブラウザが遅延読み込みする。直近 CHART_MAX_POINTS 本に絞る。
+    """
+    d = df.sort_index().tail(CHART_MAX_POINTS)
+    chart = {
+        "c": row["code"],
+        "n": row["name"],
+        "cat": row["category"],
+        "base": base.isoformat(),
+        "d": [x.isoformat() for x in d.index],
+        "close": [round(float(v), 2) for v in d["Close"]],
+        "vol": [int(v) if v == v else 0 for v in d["Volume"]],  # NaN→0
+    }
+    (CHARTS_DIR / f"{row['code']}.json").write_text(
+        json.dumps(chart, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def main() -> None:
@@ -33,6 +59,8 @@ def main() -> None:
         progress_cb=lambda d, t: logger.info("株価取得 %d/%d", d, t),
     )
 
+    CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+
     meta_by_ticker = meta.set_index("ticker")
     stocks: list[dict] = []
     for ticker, df in prices.items():
@@ -46,6 +74,7 @@ def main() -> None:
         feat["name"] = row["name"]
         feat["cat"] = row["category"]
         stocks.append(feat)
+        write_chart(df, row, base)
 
     counts: dict[str, int] = {}
     for s in stocks:

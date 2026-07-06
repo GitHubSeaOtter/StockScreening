@@ -2,15 +2,19 @@
 
 東証上場銘柄を対象に、テクニカル条件でスクリーニングする Web アプリです。
 
-**方式: GitHub Actions で定期実行 → JSON を出力 → GitHub Pages の静的ページで閲覧。**
+**方式: GitHub Actions で定期実行 → データ生成 → GitHub Pages に直接デプロイ。**
 サーバーを常時起動する必要がなく、iPhone のブラウザからいつでも結果を見られます。
+生成データは Git にコミットせず、ビルド成果物として毎回デプロイするためリポジトリは肥大化しません。
 
 ```
 GitHub Actions(平日 17:00 JST 定期実行)
   └─ build_dataset.py … JPX 銘柄一覧 + yfinance 株価を取得し、
-                        全銘柄の特徴量を計算して docs/data/screening.json に出力・コミット
-GitHub Pages(docs/)
+       ├─ 全銘柄の特徴量を計算 → docs/data/screening.json
+       └─ 銘柄ごとの日足チャート     → docs/data/charts/<コード>.json
+     生成した docs/ を Pages 成果物としてアップロード → deploy-pages でデプロイ
+GitHub Pages
   └─ index.html … screening.json を読み込み、ブラウザ内で条件評価・表示
+                  行タップで chart JSON を遅延読み込みし、株価チャートを表示
 ```
 
 ## 機能
@@ -24,14 +28,17 @@ GitHub Pages(docs/)
 - **自然言語での条件指定**(任意): 「3ヶ月連続で10%以上上昇、株価は500円から3000円」のような文章を
   Claude API(claude-haiku-4-5)で条件に変換。API キー未設定でも手動指定で全機能利用可
 - **結果表示**: 銘柄名・銘柄コード・終値・上昇率(3ヶ月 / 1ヶ月 / 1週間)をソート可能なリストで表示
+- **銘柄詳細・株価チャート**: 結果の行をタップすると、その銘柄の詳細と株価チャートを表示。
+  チャートの期間(1週 / 1ヶ月 / 3ヶ月 / 6ヶ月 / 1年)を切り替え可能
 - **基準日**: 前営業日。ただし営業日の日本時間 15:30 以降は当日(祝日・年末年始を自動考慮)
 
 ## セットアップ(GitHub 上で運用)
 
 1. このリポジトリを GitHub に置く(このブランチをデフォルトブランチにマージ)
-2. **Settings → Pages** で Source を「Deploy from a branch」、ブランチを対象ブランチの **`/docs`** に設定
-3. **Actions → 定期スクリーニング → Run workflow** で初回データを生成
-   (以降は平日 17:00 JST に自動実行され、`docs/data/screening.json` が更新される)
+2. **Settings → Pages** で Source を **「GitHub Actions」** に設定
+   (「Deploy from a branch」ではありません。ワークフローが直接デプロイします)
+3. **Actions → 定期スクリーニング → Run workflow** で初回データを生成・デプロイ
+   (以降は平日 17:00 JST に自動実行・自動デプロイ)
 4. iPhone の Safari で GitHub Pages の URL(`https://<ユーザー名>.github.io/<リポジトリ名>/`)を開く
 
 > ⏰ **cron による定期実行はデフォルトブランチのワークフローのみ有効**です(GitHub の仕様)。
@@ -41,7 +48,7 @@ GitHub Pages(docs/)
 
 ```bash
 pip install -r requirements.txt
-python build_dataset.py          # docs/data/screening.json を生成
+python build_dataset.py              # docs/data/screening.json + charts/*.json を生成
 python -m http.server -d docs 8000   # http://localhost:8000/ で確認
 ```
 
@@ -73,12 +80,14 @@ app/
   features.py          1銘柄あたりの特徴量ベクトル計算
   conditions.py        条件評価(Python リファレンス実装)
 docs/                  GitHub Pages 公開ディレクトリ
-  index.html           静的ビューア(条件ビルダー + ブラウザ内評価)
+  index.html           静的ビューア(条件ビルダー + ブラウザ内評価 + 詳細/チャート)
   conditions.js        条件評価(JS 実装 / Python と同一ロジック)
   model-routing.md     モデル選定(コスト最適化)の記録
-  data/screening.json  Actions が生成(初回実行までは存在しない)
+  data/                Actions が生成(Git 管理外・成果物として直接デプロイ)
+    screening.json       全銘柄の特徴量
+    charts/<コード>.json  銘柄ごとの日足(タップ時に遅延読み込み)
 .github/workflows/
-  screening.yml        定期実行ワークフロー
+  screening.yml        定期実行 + Pages デプロイのワークフロー
 tests/                 Python↔JS parity テスト
 ```
 

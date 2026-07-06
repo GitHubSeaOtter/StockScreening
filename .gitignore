@@ -8,3 +8,6 @@ cache/
 
 # parity テストの生成物
 tests/fixtures.json
+
+# 生成データ(GitHub Actions が毎回生成し、Pages 成果物として直接デプロイ)
+docs/data/

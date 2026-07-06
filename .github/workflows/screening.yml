@@ -6,15 +6,19 @@ on:
     - cron: "0 8 * * 1-5"
   workflow_dispatch: {}  # 手動実行(任意のブランチを選択可)
 
+# GitHub Actions で Pages を直接デプロイするために必要な権限。
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
+# 同時デプロイを避ける(実行中のデプロイはキャンセルしない)。
 concurrency:
-  group: screening
+  group: pages
   cancel-in-progress: false
 
 jobs:
-  screen:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,17 +31,23 @@ jobs:
       - name: 依存関係をインストール
         run: pip install -r requirements.txt
 
-      - name: スクリーニングデータを生成
+      - name: スクリーニングデータ + チャートを生成
         run: python build_dataset.py
 
-      - name: 結果をコミット
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/data/screening.json
-          if git diff --cached --quiet; then
-            echo "変更なし — コミットをスキップ"
-          else
-            git commit -m "スクリーニング結果を更新 ($(TZ=Asia/Tokyo date +%Y-%m-%d))"
-            git push
-          fi
+      - uses: actions/configure-pages@v5
+
+      - name: 成果物(docs/)をアップロード
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: GitHub Pages へデプロイ
+        id: deployment
+        uses: actions/deploy-pages@v4

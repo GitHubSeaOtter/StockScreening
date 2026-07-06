@@ -67,6 +67,49 @@
   .err { color: var(--up); font-size: 0.85rem; margin-top: 8px; }
   .ok { color: var(--down); font-size: 0.85rem; margin-top: 8px; }
   details summary { font-size: 0.9rem; color: var(--sub); padding: 6px 0; cursor: pointer; }
+  tbody tr { cursor: pointer; }
+  tbody tr:active { background: var(--accent-soft); }
+  .chev { color: var(--sub); font-size: 0.75rem; }
+
+  /* 詳細モーダル */
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45);
+    display: flex; align-items: flex-end; justify-content: center; z-index: 50;
+  }
+  .modal[hidden] { display: none; }
+  .sheet {
+    background: var(--card); width: 100%; max-width: 640px;
+    max-height: 92vh; overflow-y: auto;
+    border-radius: 16px 16px 0 0; padding: 16px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+  .sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .sheet-title { font-size: 1.1rem; font-weight: 700; }
+  .sheet-code { color: var(--sub); font-size: 0.85rem; margin-top: 2px; }
+  .sheet-close { background: var(--border); color: var(--text); border-radius: 999px;
+    width: 34px; height: 34px; padding: 0; font-size: 1.1rem; flex: none; }
+  .stat-grid { display: flex; flex-wrap: wrap; gap: 14px; margin: 12px 0; }
+  .stat { font-size: 0.9rem; }
+  .stat b { display: block; font-size: 1.05rem; }
+  .stat span.lbl { color: var(--sub); font-size: 0.72rem; }
+  .period-btns { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+  .period-btns button { padding: 6px 12px; font-size: 0.85rem; background: var(--bg);
+    color: var(--text); border: 1px solid var(--border); }
+  .period-btns button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chart-box { position: relative; margin-top: 6px; }
+  .chart-box .yhi, .chart-box .ylo { position: absolute; right: 2px; font-size: 0.7rem;
+    color: var(--sub); background: var(--card); padding: 0 2px; }
+  .chart-box .yhi { top: 2px; } .chart-box .ylo { bottom: 30px; }
+  svg.chart { width: 100%; height: 220px; display: block; }
+  svg.chart .line { stroke-width: 2px; fill: none; }
+  svg.chart.up .line { stroke: var(--up); } svg.chart.down .line { stroke: var(--down); }
+  svg.chart .area { opacity: .12; }
+  svg.chart.up .area { fill: var(--up); } svg.chart.down .area { fill: var(--down); }
+  svg.chart .vol { fill: var(--sub); opacity: .35; }
+  svg.chart .grid { stroke: var(--border); stroke-width: 1px; }
+  .xlabels { display: flex; justify-content: space-between; color: var(--sub);
+    font-size: 0.72rem; margin-top: 2px; }
+  .detail-msg { color: var(--sub); font-size: 0.9rem; padding: 20px 0; text-align: center; }
 </style>
 </head>
 <body>
@@ -106,6 +149,7 @@
 
 <div class="card" id="resultCard" hidden>
   <h2>結果 <span id="resultCount" class="sub"></span></h2>
+  <div class="sub" style="margin:-4px 0 8px">行をタップで詳細・株価チャート</div>
   <div class="table-wrap">
     <table>
       <thead><tr>
@@ -130,6 +174,21 @@
     </div>
     <div id="keyMsg"></div>
   </details>
+</div>
+
+<div class="modal" id="detailModal" hidden onclick="if(event.target===this)closeDetail()">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div>
+        <div class="sheet-title" id="dTitle"></div>
+        <div class="sheet-code" id="dCode"></div>
+      </div>
+      <button class="sheet-close" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="stat-grid" id="dStats"></div>
+    <div class="period-btns" id="dPeriods"></div>
+    <div id="dChart"><div class="detail-msg">読み込み中...</div></div>
+  </div>
 </div>
 
 <script src="conditions.js"></script>
@@ -239,14 +298,107 @@ function renderResults() {
   document.getElementById('resultCard').hidden = false;
   document.getElementById('resultCount').textContent = `${rows.length} 銘柄`;
   document.getElementById('resultBody').innerHTML = rows.map(r => `
-    <tr>
+    <tr onclick="openDetail('${r.code}')">
       <td>${r.code} <span class="tag">${CATS[r.cat]||r.cat}</span></td>
-      <td class="name">${r.name}</td>
+      <td class="name">${r.name} <span class="chev">›</span></td>
       <td>${r.close != null ? r.close.toLocaleString() : '-'}</td>
       <td>${fmtPct(r.r3)}</td>
       <td>${fmtPct(r.r1)}</td>
       <td>${fmtPct(r.rw)}</td>
     </tr>`).join('');
+}
+
+// ---- 銘柄詳細 + 株価チャート ----
+const CHART_CACHE = {};
+const PERIODS = [
+  { label: '1週', n: 5 }, { label: '1ヶ月', n: 21 }, { label: '3ヶ月', n: 63 },
+  { label: '6ヶ月', n: 126 }, { label: '1年', n: 9999 },
+];
+let curChart = null, curStock = null, curPeriod = 2;
+
+function openDetail(code) {
+  curStock = RESULTS.find(s => s.code === code) || (DATA && DATA.stocks.find(s => s.code === code));
+  if (!curStock) return;
+  const m = document.getElementById('detailModal');
+  m.hidden = false;
+  document.getElementById('dTitle').textContent = curStock.name;
+  document.getElementById('dCode').textContent = `${curStock.code}・${CATS[curStock.cat] || curStock.cat}`;
+  document.getElementById('dStats').innerHTML = [
+    ['終値', curStock.close != null ? curStock.close.toLocaleString() + ' 円' : '-'],
+    ['3ヶ月', fmtPct(curStock.r3)], ['1ヶ月', fmtPct(curStock.r1)], ['1週間', fmtPct(curStock.rw)],
+  ].map(([l, v]) => `<div class="stat"><span class="lbl">${l}</span><b>${v}</b></div>`).join('');
+  document.getElementById('dPeriods').innerHTML = PERIODS.map((p, i) =>
+    `<button class="${i === curPeriod ? 'active' : ''}" onclick="setPeriod(${i})">${p.label}</button>`).join('');
+  document.getElementById('dChart').innerHTML = '<div class="detail-msg">読み込み中...</div>';
+  curChart = null;
+  loadChart(code);
+}
+
+function closeDetail() { document.getElementById('detailModal').hidden = true; }
+
+async function loadChart(code) {
+  if (CHART_CACHE[code]) { curChart = CHART_CACHE[code]; renderChart(); return; }
+  try {
+    const res = await fetch(`./data/charts/${code}.json`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    CHART_CACHE[code] = data;
+    if (curStock && curStock.code === code) { curChart = data; renderChart(); }
+  } catch (e) {
+    document.getElementById('dChart').innerHTML =
+      '<div class="detail-msg">チャートデータを取得できませんでした</div>';
+  }
+}
+
+function setPeriod(i) {
+  curPeriod = i;
+  document.querySelectorAll('#dPeriods button').forEach((b, j) =>
+    b.classList.toggle('active', j === i));
+  renderChart();
+}
+
+function renderChart() {
+  if (!curChart) return;
+  const n = curChart.close.length;
+  const count = Math.min(PERIODS[curPeriod].n, n);
+  const start = n - count;
+  const close = curChart.close.slice(start);
+  const vol = curChart.vol.slice(start);
+  const dates = curChart.d.slice(start);
+  document.getElementById('dChart').innerHTML = buildChartHTML(dates, close, vol);
+}
+
+function buildChartHTML(dates, close, vol) {
+  if (close.length < 2) return '<div class="detail-msg">データが不足しています</div>';
+  const W = 320, H = 200, padT = 6, padB = 34, padX = 2;
+  const n = close.length;
+  const lo = Math.min(...close), hi = Math.max(...close), span = (hi - lo) || 1;
+  const x = i => padX + (W - 2 * padX) * (n <= 1 ? 0 : i / (n - 1));
+  const y = v => padT + (H - padT - padB) * (1 - (v - lo) / span);
+  const linePts = close.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const areaPts = `${x(0).toFixed(1)},${(H - padB).toFixed(1)} ${linePts} ${x(n - 1).toFixed(1)},${(H - padB).toFixed(1)}`;
+  const vmax = Math.max(...vol, 1), bandH = padB - 8, bandTop = H - padB + 6;
+  const bw = Math.max(0.6, (W - 2 * padX) / n * 0.7);
+  const bars = vol.map((v, i) =>
+    `<rect class="vol" x="${(x(i) - bw / 2).toFixed(1)}" y="${(bandTop + bandH * (1 - v / vmax)).toFixed(1)}" width="${bw.toFixed(1)}" height="${(bandH * v / vmax).toFixed(1)}"/>`
+  ).join('');
+  const up = close[n - 1] >= close[0];
+  const svg = `<svg class="chart ${up ? 'up' : 'down'}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <line class="grid" x1="0" y1="${padT.toFixed(1)}" x2="${W}" y2="${padT.toFixed(1)}"/>
+    <line class="grid" x1="0" y1="${(H - padB).toFixed(1)}" x2="${W}" y2="${(H - padB).toFixed(1)}"/>
+    ${bars}
+    <polygon class="area" points="${areaPts}"/>
+    <polyline class="line" points="${linePts}" vector-effect="non-scaling-stroke"/>
+  </svg>`;
+  const chg = ((close[n - 1] / close[0] - 1) * 100);
+  return `<div class="chart-box">
+      <span class="yhi">${hi.toLocaleString()}</span>
+      <span class="ylo">${lo.toLocaleString()}</span>
+      ${svg}
+    </div>
+    <div class="xlabels"><span>${dates[0]}</span>
+      <span class="${chg >= 0 ? 'pos' : 'neg'}">${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%</span>
+      <span>${dates[n - 1]}</span></div>`;
 }
 
 // ---- 自然言語 → 条件(Anthropic API 直接呼び出し / model-routing: haiku) ----
