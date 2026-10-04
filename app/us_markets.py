@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 NEW_YORK = ZoneInfo("America/New_York")
 INDEX_PAGES = {
     "dow": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average",
-    "nasdaq100": "https://en.wikipedia.org/wiki/Nasdaq-100",
+    "nasdaq100": "https://en.wikipedia.org/wiki/List_of_Nasdaq-100_companies",
 }
 # Wikipedia の Dow ページから構成銘柄表が消えた場合に使う直近の控え。
 # 毎回ページを優先する。銘柄入替があればこの一覧を更新する。
