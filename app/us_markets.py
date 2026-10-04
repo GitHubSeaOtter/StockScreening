@@ -17,6 +17,38 @@ INDEX_PAGES = {
     "dow": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average",
     "nasdaq100": "https://en.wikipedia.org/wiki/Nasdaq-100",
 }
+# Wikipedia の Dow ページから構成銘柄表が消えた場合に使う直近の控え。
+# 毎回ページを優先する。銘柄入替があればこの一覧を更新する。
+DOW_SNAPSHOT = """AAPL Apple
+AMGN Amgen
+AMZN Amazon
+AXP American Express
+BA Boeing
+CAT Caterpillar
+CRM Salesforce
+CSCO Cisco
+CVX Chevron
+DIS Disney
+GS Goldman Sachs
+HD Home Depot
+HON Honeywell
+IBM IBM
+JNJ Johnson & Johnson
+JPM JPMorgan Chase
+KO Coca-Cola
+MCD McDonald's
+MMM 3M
+MRK Merck
+MSFT Microsoft
+NKE Nike
+NVDA Nvidia
+PG Procter & Gamble
+SHW Sherwin-Williams
+TRV Travelers
+UNH UnitedHealth
+V Visa
+VZ Verizon
+WMT Walmart"""
 
 
 def fetch_constituents() -> pd.DataFrame:
@@ -34,6 +66,10 @@ def fetch_constituents() -> pd.DataFrame:
             if symbol_col and "Company" in candidate.columns and len(candidate) >= (25 if market == "dow" else 90):
                 table = candidate
                 break
+        if table is None and market == "dow":
+            logger.warning("NYダウの構成銘柄表がないため同梱一覧を使用: %s", seen[:5])
+            table = pd.DataFrame([line.split(" ", 1) for line in DOW_SNAPSHOT.splitlines()], columns=["Ticker", "Company"])
+            symbol_col = "Ticker"
         if table is None:
             raise ValueError(f"{market} の構成銘柄表が見つかりません: {seen}")
         for _, row in table.iterrows():

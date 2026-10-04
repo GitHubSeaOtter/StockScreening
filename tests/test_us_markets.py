@@ -29,6 +29,15 @@ class USMarketsTest(unittest.TestCase):
         self.assertEqual(quote["AAPL"]["after"], 103.0)
         self.assertEqual(quote["AAPL"]["after_pct"], 3.0)
 
+    def test_dow_falls_back_when_source_has_no_constituent_table(self):
+        nasdaq = pd.DataFrame({"Ticker": [f"Q{i}" for i in range(90)],
+                               "Company": [f"Company {i}" for i in range(90)]})
+        response = type("Response", (), {"text": "<html></html>", "raise_for_status": lambda self: None})()
+        with patch.object(us_markets.requests, "get", return_value=response), \
+             patch.object(us_markets.pd, "read_html", side_effect=[[pd.DataFrame({"Year": [2026]})], [nasdaq]]):
+            rows = us_markets.fetch_constituents()
+        self.assertEqual(sum("dow" in markets for markets in rows["markets"]), 30)
+
     def test_missing_session_has_no_after_price(self):
         times = pd.to_datetime(["2026-10-02 15:55"]).tz_localize(us_markets.NEW_YORK)
         frame = pd.DataFrame({"Close": [100.0]}, index=times)
