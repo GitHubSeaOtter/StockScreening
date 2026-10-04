@@ -5,6 +5,8 @@ docs/conditions.js と完全に同じロジックを実装する。両者は同�
 
 条件タイプ:
   consecutive_monthly_gain {months, min_pct}
+  consecutive_period_return {unit: "week"|"month", periods: 1..12,
+                             op: ">"|">="|"<"|"<=", pct}
   rise_from_recent_low     {lookback_months, min_pct}
   period_return            {period: "3m"|"1m"|"1w", op: ">="|"<=", pct}
   price_range              {min?, max?}
@@ -15,6 +17,25 @@ from __future__ import annotations
 
 def _eval_cond(f: dict, c: dict) -> bool:
     ctype = c.get("type")
+    if ctype == "consecutive_period_return":
+        series = f.get({"week": "wc", "month": "mc"}.get(c.get("unit", ""), ""))
+        periods = c.get("periods")
+        op = c.get("op")
+        if (not isinstance(periods, int) or not 1 <= periods <= 12 or
+                op not in (">", ">=", "<", "<=") or
+                not isinstance(series, list) or len(series) <= periods):
+            return False
+        pct = float(c.get("pct", 0))
+        for k in range(periods, 0, -1):
+            older, newer = series[k], series[k - 1]
+            if older is None or newer is None or older <= 0:
+                return False
+            change = (newer / older - 1.0) * 100.0
+            if not {">": change > pct, ">=": change >= pct,
+                    "<": change < pct, "<=": change <= pct}[op]:
+                return False
+        return True
+
     if ctype == "consecutive_monthly_gain":
         m = int(c.get("months", 3))
         p = float(c.get("min_pct", 10))

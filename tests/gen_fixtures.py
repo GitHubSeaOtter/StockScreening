@@ -34,6 +34,9 @@ for code, df in dfs.items():
     feats.append(ft)
 
 tests = [
+    {"conditions": [{"type":"consecutive_period_return","unit":"week","periods":4,"op":">","pct":0}]},
+    {"conditions": [{"type":"consecutive_period_return","unit":"week","periods":4,"op":"<","pct":0}]},
+    {"conditions": [{"type":"consecutive_period_return","unit":"month","periods":3,"op":">=","pct":10}]},
     {"conditions": [{"type":"consecutive_monthly_gain","months":3,"min_pct":10}]},
     {"conditions": [{"type":"rise_from_recent_low","lookback_months":3,"min_pct":10}]},
     {"conditions": [{"type":"period_return","period":"1m","op":"<=","pct":0}]},

@@ -135,6 +135,7 @@
   <div id="conds"></div>
   <div class="row">
     <button class="small" onclick="addCond('consecutive_monthly_gain')">＋連続上昇</button>
+    <button class="small" onclick="addCond('consecutive_period_return')">＋週・月の連続騰落</button>
     <button class="small" onclick="addCond('rise_from_recent_low')">＋安値から上昇</button>
     <button class="small" onclick="addCond('period_return')">＋期間騰落率</button>
     <button class="small" onclick="addCond('price_range')">＋株価レンジ</button>
@@ -144,7 +145,7 @@
   <div class="hint">当日の時間外価格がない銘柄は終値で判定します。騰落率の表示も選択した価格に合わせます。価格条件の単位は東証が円、米国が米ドルです。</div>
   <details style="margin-top:10px">
     <summary>🤖 自然言語で条件を指定(要 API キー)</summary>
-    <textarea id="nlText" placeholder="例: 3ヶ月連続で10%以上上昇、株価は500円から3000円"></textarea>
+    <textarea id="nlText" placeholder="例: 直近1ヶ月、毎週上昇している銘柄"></textarea>
     <div class="row"><button class="small" onclick="parseNL()" id="nlBtn">文章からスクリーニング</button></div>
     <div id="nlMsg"></div>
   </details>
@@ -211,6 +212,7 @@ let sortKey = 'r3', sortDesc = true;
 
 const DEFS = {
   consecutive_monthly_gain: { label: '連続月間上昇', make: () => ({type:'consecutive_monthly_gain', months:3, min_pct:10}) },
+  consecutive_period_return: { label: '週・月の連続騰落', make: () => ({type:'consecutive_period_return', unit:'week', periods:4, op:'>', pct:0}) },
   rise_from_recent_low:     { label: '安値からの上昇', make: () => ({type:'rise_from_recent_low', lookback_months:3, min_pct:10}) },
   period_return:            { label: '期間騰落率', make: () => ({type:'period_return', period:'3m', op:'>=', pct:10}) },
   price_range:              { label: '株価レンジ', make: () => ({type:'price_range', min:100, max:10000}) },
@@ -233,6 +235,15 @@ function renderConds() {
     let body = '';
     if (c.type === 'consecutive_monthly_gain')
       body = `${num(c,'months','min=1 max=12')} ヶ月連続で、毎月 ${num(c,'min_pct')} % 以上上昇`;
+    else if (c.type === 'consecutive_period_return')
+      body = `直近 ${num(c,'periods','min=1 max=12')} <select onchange="CONDS[${i}].unit=this.value">
+          <option value="week" ${c.unit==='week'?'selected':''}>週</option>
+          <option value="month" ${c.unit==='month'?'selected':''}>ヶ月</option>
+        </select> の各期間の騰落率が ${num(c,'pct','step=any')} %
+        <select onchange="CONDS[${i}].op=this.value">
+          ${[['>','より大きい'],['>=','以上'],['<','より小さい'],['<=','以下']].map(([op,label])=>
+            `<option value="${op}" ${c.op===op?'selected':''}>${label}</option>`).join('')}
+        </select>`;
     else if (c.type === 'rise_from_recent_low')
       body = `直近 ${num(c,'lookback_months','min=1 max=12')} ヶ月の安値から ${num(c,'min_pct')} % 以上上昇`;
     else if (c.type === 'period_return')
@@ -280,7 +291,8 @@ function selectedMarkets() {
 function effectiveStock(s) {
   if (!document.getElementById('useAfter').checked || s.after == null || s.close == null) return s;
   const ratio = s.after / s.close;
-  const adjusted = { ...s, close: s.after, mc: [s.after, ...s.mc.slice(1)] };
+  const adjusted = { ...s, close: s.after, mc: [s.after, ...s.mc.slice(1)],
+    wc: s.wc ? [s.after, ...s.wc.slice(1)] : undefined };
   for (const key of ['r3', 'r1', 'rw'])
     if (s[key] != null) adjusted[key] = ((1 + s[key] / 100) * ratio - 1) * 100;
   return adjusted;
@@ -454,33 +466,38 @@ function buildChartHTML(dates, close, vol) {
       <span>${dates[n - 1]}</span></div>`;
 }
 
-// ---- 自然言語 → 条件(Anthropic API 直接呼び出し / model-routing: haiku) ----
+// ---- 自然言語 → 条件(OpenAI Responses / Anthropic API) ----
 const NL_SCHEMA = {
   type: "object",
   properties: { markets: { type: "array", items: {type:"string",enum:["jpx","dow","nasdaq100"]} },
     price_mode: { type: "string", enum: ["close", "after"] },
+    unhandled: { type: "array", items: { type: "string" } },
     conditions: { type: "array", items: {
     type: "object",
     properties: {
-      type: { type: "string", enum: ["consecutive_monthly_gain","rise_from_recent_low","period_return","price_range","min_avg_volume"] },
+      type: { type: "string", enum: ["consecutive_monthly_gain","consecutive_period_return","rise_from_recent_low","period_return","price_range","min_avg_volume"] },
       months: { type: ["integer","null"] }, min_pct: { type: ["number","null"] },
+      unit: { type: ["string","null"], enum: ["week","month",null] },
+      periods: { type: ["integer","null"] },
       lookback_months: { type: ["integer","null"] },
       period: { type: ["string","null"], enum: ["3m","1m","1w",null] },
-      op: { type: ["string","null"], enum: [">=","<=",null] }, pct: { type: ["number","null"] },
+      op: { type: ["string","null"], enum: [">",">=","<","<=",null] }, pct: { type: ["number","null"] },
       min: { type: ["number","null"] }, max: { type: ["number","null"] },
       days: { type: ["integer","null"], enum: [5,20,60,null] }, min_volume: { type: ["number","null"] },
     },
-    required: ["type","months","min_pct","lookback_months","period","op","pct","min","max","days","min_volume"], additionalProperties: false,
+    required: ["type","months","min_pct","unit","periods","lookback_months","period","op","pct","min","max","days","min_volume"], additionalProperties: false,
   } } },
-  required: ["markets","price_mode","conditions"], additionalProperties: false,
+  required: ["markets","price_mode","unhandled","conditions"], additionalProperties: false,
 };
 const NL_SYSTEM = `あなたは株式スクリーニング条件のパーサーです。日本語の条件文を指定スキーマの JSON 条件リストに変換してください。
-条件タイプ: consecutive_monthly_gain(N ヶ月連続で毎月 min_pct% 以上上昇: months,min_pct)/ rise_from_recent_low(直近 lookback_months ヶ月の安値から min_pct% 以上上昇)/ period_return(期間 period[3m/1m/1w] の騰落率が op[>=/<=] pct%)/ price_range(株価 min〜max 円)/ min_avg_volume(直近 days[5/20/60] 日の平均出来高が min_volume 以上)。
+条件タイプ: consecutive_monthly_gain(N ヶ月連続で毎月 min_pct% 以上上昇: months,min_pct)/ consecutive_period_return(直近 periods 個の各 unit[week/month] 期間の騰落率が op[>,>=,<,<=] pct%: unit,periods,op,pct)/ rise_from_recent_low(直近 lookback_months ヶ月の安値から min_pct% 以上上昇)/ period_return(期間 period[3m/1m/1w] の騰落率が op[>=/<=] pct%)/ price_range(株価 min〜max 円)/ min_avg_volume(直近 days[5/20/60] 日の平均出来高が min_volume 以上)。
+「1ヶ月間、毎週上昇」は consecutive_period_return(unit=week,periods=4,op=>,pct=0)。各週は基準日から7日ずつ遡った終値間の比較であり、暦の週末固定ではない。「毎週下落」は op=<,pct=0。明示された割合以上の連続上昇なら op=>=。期間は最大12週または12ヶ月。
 使わないフィールドは null。markets は明示された市場だけ指定し、省略時は空配列。price_mode はアフター・時間外価格の指定があれば after、それ以外は close。
-複数条件は AND。市場ごとの通貨は東証が円、米国が米ドル。解釈できない条件は無視し、確実に読み取れた条件のみ出力。`;
+複数条件は AND。市場ごとの通貨は東証が円、米国が米ドル。条件を表現できない部分は unhandled に原文の短い抜粋を入れ、黙って省略しない。すべて解釈できた場合は空配列。`;
 
 const FIELDS = {
   consecutive_monthly_gain: ['months','min_pct'], rise_from_recent_low: ['lookback_months','min_pct'],
+  consecutive_period_return: ['unit','periods','op','pct'],
   period_return: ['period','op','pct'], price_range: ['min','max'], min_avg_volume: ['days','min_volume'],
 };
 
@@ -489,6 +506,7 @@ function cleanNLCondition(c) {
   const out = {type:c.type};
   for (const field of FIELDS[c.type]) if (c[field] != null) out[field] = c[field];
   if (c.type === 'consecutive_monthly_gain' && (!Number.isInteger(out.months) || out.months < 1 || out.months > 12 || !Number.isFinite(out.min_pct))) return null;
+  if (c.type === 'consecutive_period_return' && (!['week','month'].includes(out.unit) || !Number.isInteger(out.periods) || out.periods < 1 || out.periods > 12 || !['>','>=','<','<='].includes(out.op) || !Number.isFinite(out.pct))) return null;
   if (c.type === 'rise_from_recent_low' && (!Number.isInteger(out.lookback_months) || out.lookback_months < 1 || out.lookback_months > 12 || !Number.isFinite(out.min_pct))) return null;
   if (c.type === 'period_return' && (!['3m','1m','1w'].includes(out.period) || !['>=','<='].includes(out.op) || !Number.isFinite(out.pct))) return null;
   if (c.type === 'price_range' && (out.min == null && out.max == null || (out.min != null && (!Number.isFinite(out.min) || out.min < 0)) || (out.max != null && (!Number.isFinite(out.max) || out.max < 0)))) return null;
@@ -533,6 +551,9 @@ async function parseNL() {
     if (!raw) throw new Error('API が条件を返しませんでした');
     const parsed = JSON.parse(raw);
     const conds = (parsed.conditions || []).map(cleanNLCondition).filter(Boolean);
+    if (conds.length !== (parsed.conditions || []).length) throw new Error('指定条件を安全に解釈できませんでした。表現を変えて再試行してください');
+    if (Array.isArray(parsed.unhandled) && parsed.unhandled.length)
+      throw new Error('対応できない条件: ' + parsed.unhandled.join('、'));
     if (conds.length === 0 && !(Array.isArray(parsed.markets) && parsed.markets.length))
       throw new Error('条件を読み取れませんでした');
     if (Array.isArray(parsed.markets) && parsed.markets.length) {

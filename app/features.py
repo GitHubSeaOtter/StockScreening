@@ -7,6 +7,7 @@ Python 側の条件評価(app/conditions.py)と JS 側は同じ特徴量を入�
 特徴量(1銘柄 = 1 dict):
   code, name, cat, close
   mc:  長さ13の配列。mc[k] = k ヶ月前の終値(0=基準日時点)。欠損は null。
+  wc:  長さ13の配列。wc[k] = k 週前の終値(0=基準日時点)。欠損は null。
   lm:  長さ13の配列。lm[k] = 直近 k ヶ月の安値。lm[0] は未使用(null)。
   r3, r1, rw: 3ヶ月 / 1ヶ月 / 1週間の騰落率(%)。欠損は null。
   v:   {"5":..., "20":..., "60":...} 直近 N 日の平均出来高。
@@ -18,6 +19,7 @@ import datetime as dt
 import pandas as pd
 
 MONTHS = 12
+WEEKS = 12
 VOLUME_WINDOWS = (5, 20, 60)
 
 
@@ -47,6 +49,11 @@ def compute_features(df: pd.DataFrame, base: dt.date) -> dict:
         c = _close_on_or_before(df, base - dt.timedelta(days=30 * k))
         mc.append(_round(c))
 
+    wc: list[float | None] = []
+    for k in range(WEEKS + 1):
+        c = _close_on_or_before(df, base - dt.timedelta(days=7 * k))
+        wc.append(_round(c))
+
     lm: list[float | None] = [None]  # lm[0] は未使用
     for k in range(1, MONTHS + 1):
         start = base - dt.timedelta(days=30 * k)
@@ -62,6 +69,7 @@ def compute_features(df: pd.DataFrame, base: dt.date) -> dict:
     return {
         "close": mc[0],
         "mc": mc,
+        "wc": wc,
         "lm": lm,
         "r3": _pct_return(df, base, 90),
         "r1": _pct_return(df, base, 30),

@@ -6,6 +6,20 @@
 })(typeof self !== "undefined" ? self : this, function () {
   function evalCond(f, c) {
     switch (c.type) {
+      case "consecutive_period_return": {
+        const series = c.unit === 'week' ? f.wc : c.unit === 'month' ? f.mc : null;
+        const periods = c.periods;
+        if (!Number.isInteger(periods) || periods < 1 || periods > 12 ||
+            !['>', '>=', '<', '<='].includes(c.op) || !Array.isArray(series) || series.length <= periods) return false;
+        for (let k = periods; k >= 1; k--) {
+          const older = series[k], newer = series[k - 1];
+          if (older == null || newer == null || older <= 0) return false;
+          const change = (newer / older - 1) * 100;
+          if (!({'>': change > +c.pct, '>=': change >= +c.pct,
+                  '<': change < +c.pct, '<=': change <= +c.pct})[c.op]) return false;
+        }
+        return true;
+      }
       case "consecutive_monthly_gain": {
         const m = c.months | 0;
         const p = +c.min_pct;
