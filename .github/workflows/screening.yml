@@ -40,6 +40,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_*.py'
           python tests/gen_fixtures.py
           node tests/parity.mjs
+          node tests/nl_responses.mjs
 
       - name: スクリーニングデータ + チャートを生成
         run: python build_dataset.py

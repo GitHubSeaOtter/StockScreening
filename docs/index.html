@@ -145,7 +145,7 @@
   <details style="margin-top:10px">
     <summary>🤖 自然言語で条件を指定(要 API キー)</summary>
     <textarea id="nlText" placeholder="例: 3ヶ月連続で10%以上上昇、株価は500円から3000円"></textarea>
-    <div class="row"><button class="small" onclick="parseNL()" id="nlBtn">条件に変換</button></div>
+    <div class="row"><button class="small" onclick="parseNL()" id="nlBtn">文章からスクリーニング</button></div>
     <div id="nlMsg"></div>
   </details>
 </div>
@@ -289,12 +289,12 @@ function effectiveStock(s) {
 function runScreen() {
   const errEl = document.getElementById('runErr');
   errEl.textContent = '';
-  if (!DATA) { errEl.textContent = 'データが読み込まれていません'; return; }
+  if (!DATA) { errEl.textContent = 'データが読み込まれていません'; return false; }
   const conds = CONDS.map(({_i, ...c}) => c);
   const cats = selectedCats();
   const markets = selectedMarkets();
   if (markets.length === 0 || (markets.includes('jpx') && cats.length === 0 && markets.length === 1)) {
-    errEl.textContent = '対象を選択してください'; return;
+    errEl.textContent = '対象を選択してください'; return false;
   }
 
   RESULTS = DATA.stocks.filter(
@@ -303,6 +303,7 @@ function runScreen() {
       ScreenConditions.evaluateConditions(effectiveStock(s), conds)
   );
   renderResults();
+  return true;
 }
 
 function fmtPct(v) {
@@ -511,13 +512,13 @@ async function parseNL() {
   msg.className=''; msg.textContent='変換中...'; btn.disabled = true;
   try {
     const openai = provider === 'openai';
-    const res = await fetch(openai ? 'https://api.openai.com/v1/chat/completions' : 'https://api.anthropic.com/v1/messages', {
+    const res = await fetch(openai ? 'https://api.openai.com/v1/responses' : 'https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: openai ? {'content-type':'application/json', Authorization:`Bearer ${key}`} :
         {'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body: JSON.stringify(openai ? {
-        model:'gpt-4.1-mini', messages:[{role:'system',content:NL_SYSTEM},{role:'user',content:text}],
-        response_format:{type:'json_schema',json_schema:{name:'screening_conditions',strict:true,schema:NL_SCHEMA}},
+        model:'gpt-4.1-mini', instructions:NL_SYSTEM, input:text,
+        text:{format:{type:'json_schema',name:'screening_conditions',strict:true,schema:NL_SCHEMA}},
       } : {
         model:'claude-haiku-4-5', max_tokens:1024, system:NL_SYSTEM,
         output_config:{format:{type:'json_schema',schema:NL_SCHEMA}},
@@ -526,7 +527,9 @@ async function parseNL() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || res.statusText);
-    const raw = openai ? data.choices?.[0]?.message?.content : data.content?.find(b => b.type === 'text')?.text;
+    if (openai && data.status === 'incomplete') throw new Error('応答が途中で終了しました。文章を短くして再試行してください');
+    const raw = openai ? (data.output_text || data.output?.flatMap(item => item.content || [])
+      .find(part => part.type === 'output_text')?.text) : data.content?.find(b => b.type === 'text')?.text;
     if (!raw) throw new Error('API が条件を返しませんでした');
     const parsed = JSON.parse(raw);
     const conds = (parsed.conditions || []).map(cleanNLCondition).filter(Boolean);
@@ -536,10 +539,12 @@ async function parseNL() {
       for (const [id, market] of [['marketJpx','jpx'],['marketDow','dow'],['marketNasdaq','nasdaq100']])
         document.getElementById(id).checked = parsed.markets.includes(market);
     }
-    if (parsed.price_mode === 'after') document.getElementById('useAfter').checked = true;
-    conds.forEach(c => CONDS.push(c));
+    document.getElementById('useAfter').checked = parsed.price_mode === 'after';
+    CONDS.splice(0, CONDS.length, ...conds);
     renderConds();
-    msg.className='ok'; msg.textContent = `${conds.length} 件の条件を追加し、対象を更新しました`;
+    if (!runScreen()) throw new Error(document.getElementById('runErr').textContent);
+    document.getElementById('resultCard').scrollIntoView({behavior:'smooth',block:'start'});
+    msg.className='ok'; msg.textContent = `${conds.length} 件の条件でスクリーニングしました`;
   } catch (e) {
     msg.className='err'; msg.textContent = '変換失敗: ' + e.message;
   } finally { btn.disabled = false; }
