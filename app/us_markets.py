@@ -26,14 +26,16 @@ def fetch_constituents() -> pd.DataFrame:
         response = requests.get(url, headers={"User-Agent": "StockScreening/1.0 (public index data)"}, timeout=45)
         response.raise_for_status()
         table = None
+        seen = []
         for candidate in pd.read_html(io.StringIO(response.text)):
             candidate.columns = [str(c[-1] if isinstance(c, tuple) else c).strip() for c in candidate.columns]
+            seen.append((len(candidate), candidate.columns.tolist()))
             symbol_col = next((c for c in ("Symbol", "Ticker") if c in candidate.columns), None)
             if symbol_col and "Company" in candidate.columns and len(candidate) >= (25 if market == "dow" else 90):
                 table = candidate
                 break
         if table is None:
-            raise ValueError(f"{market} の構成銘柄表が見つかりません")
+            raise ValueError(f"{market} の構成銘柄表が見つかりません: {seen}")
         for _, row in table.iterrows():
             code = str(row[symbol_col]).strip().replace(".", "-")
             if not re.fullmatch(r"[A-Z0-9-]{1,12}", code):
