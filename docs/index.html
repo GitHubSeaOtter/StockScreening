@@ -110,6 +110,8 @@
   .xlabels { display: flex; justify-content: space-between; color: var(--sub);
     font-size: 0.72rem; margin-top: 2px; }
   .detail-msg { color: var(--sub); font-size: 0.9rem; padding: 20px 0; text-align: center; }
+  .code-btn { padding: 4px 6px; background: transparent; text-decoration: underline; }
+  .hint { color: var(--sub); font-size: .78rem; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -118,6 +120,10 @@
 
 <div class="card">
   <h2>対象</h2>
+  <label class="chk"><input type="checkbox" id="marketJpx" checked> 東証</label>
+  <label class="chk"><input type="checkbox" id="marketDow"> NYダウ</label>
+  <label class="chk"><input type="checkbox" id="marketNasdaq"> NASDAQ-100</label>
+  <div class="hint">東証の内訳</div>
   <label class="chk"><input type="checkbox" id="catStock" checked> 株</label>
   <label class="chk"><input type="checkbox" id="catTrust"> 信託(REIT等)</label>
   <label class="chk"><input type="checkbox" id="catEtf"> ETF</label>
@@ -134,6 +140,8 @@
     <button class="small" onclick="addCond('price_range')">＋株価レンジ</button>
     <button class="small" onclick="addCond('min_avg_volume')">＋出来高</button>
   </div>
+  <div class="row"><label class="chk"><input type="checkbox" id="useAfter"> 米国株は直近の時間外価格で比較</label></div>
+  <div class="hint">当日の時間外価格がない銘柄は終値で判定します。騰落率の表示も選択した価格に合わせます。価格条件の単位は東証が円、米国が米ドルです。</div>
   <details style="margin-top:10px">
     <summary>🤖 自然言語で条件を指定(要 API キー)</summary>
     <textarea id="nlText" placeholder="例: 3ヶ月連続で10%以上上昇、株価は500円から3000円"></textarea>
@@ -149,12 +157,12 @@
 
 <div class="card" id="resultCard" hidden>
   <h2>結果 <span id="resultCount" class="sub"></span></h2>
-  <div class="sub" style="margin:-4px 0 8px">行をタップで詳細・株価チャート</div>
+  <div class="sub" style="margin:-4px 0 8px">コードをタップでコピー。行をタップで詳細・株価チャート</div>
   <div class="table-wrap">
     <table>
       <thead><tr>
         <th onclick="sortBy('code')">コード</th><th>銘柄名</th>
-        <th onclick="sortBy('close')">終値</th>
+        <th onclick="sortBy('close')">終値</th><th onclick="sortBy('after')">時間外</th>
         <th onclick="sortBy('r3')">3ヶ月</th>
         <th onclick="sortBy('r1')">1ヶ月</th>
         <th onclick="sortBy('rw')">1週間</th>
@@ -166,12 +174,14 @@
 
 <div class="card">
   <details>
-    <summary>⚙️ 設定(Anthropic API キー)</summary>
-    <p class="sub" style="margin:8px 0">自然言語変換に使用します。キーはこの端末のブラウザ(localStorage)にのみ保存され、変換時に直接 Anthropic API へ送信されます。使わない場合は不要です。</p>
+    <summary>⚙️ 設定(API キー)</summary>
+    <p class="sub" style="margin:8px 0">自然言語変換に使用します。キーはこの端末のブラウザ(localStorage)にのみ保存され、選択した API に直接送信されます。</p>
+    <div class="row"><select id="apiProvider" onchange="setProvider(this.value)"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></div>
     <div class="row">
-      <input type="password" id="apiKey" placeholder="sk-ant-..." style="flex:1">
+      <input type="password" id="apiKey" placeholder="API キー" style="flex:1" autocomplete="off">
       <button class="small" onclick="saveKey()">保存</button>
     </div>
+    <div class="hint" id="keyStatus"></div>
     <div id="keyMsg"></div>
   </details>
 </div>
@@ -181,7 +191,7 @@
     <div class="sheet-head">
       <div>
         <div class="sheet-title" id="dTitle"></div>
-        <div class="sheet-code" id="dCode"></div>
+        <button class="sheet-code code-btn" id="dCode" onclick="copyCurrentCode()"></button>
       </div>
       <button class="sheet-close" onclick="closeDetail()">✕</button>
     </div>
@@ -236,7 +246,7 @@ function renderConds() {
           <option value="<=" ${c.op==='<='?'selected':''}>以下</option>
         </select>`;
     else if (c.type === 'price_range')
-      body = `終値が ${num(c,'min')} 円 〜 ${num(c,'max')} 円`;
+      body = `価格が ${num(c,'min')} 〜 ${num(c,'max')} (東証:円 / 米国:ドル)`;
     else if (c.type === 'min_avg_volume')
       body = `直近 <select onchange="CONDS[${i}].days=Number(this.value)">
           ${[5,20,60].map(d=>`<option value="${d}" ${c.days===d?'selected':''}>${d}</option>`).join('')}
@@ -261,17 +271,36 @@ function selectedCats() {
   return cats;
 }
 
+function selectedMarkets() {
+  return [
+    ['marketJpx', 'jpx'], ['marketDow', 'dow'], ['marketNasdaq', 'nasdaq100'],
+  ].filter(([id]) => document.getElementById(id).checked).map(([, market]) => market);
+}
+
+function effectiveStock(s) {
+  if (!document.getElementById('useAfter').checked || s.after == null || s.close == null) return s;
+  const ratio = s.after / s.close;
+  const adjusted = { ...s, close: s.after, mc: [s.after, ...s.mc.slice(1)] };
+  for (const key of ['r3', 'r1', 'rw'])
+    if (s[key] != null) adjusted[key] = ((1 + s[key] / 100) * ratio - 1) * 100;
+  return adjusted;
+}
+
 function runScreen() {
   const errEl = document.getElementById('runErr');
   errEl.textContent = '';
   if (!DATA) { errEl.textContent = 'データが読み込まれていません'; return; }
   const conds = CONDS.map(({_i, ...c}) => c);
-  if (conds.length === 0) { errEl.textContent = '条件を1つ以上追加してください'; return; }
   const cats = selectedCats();
-  if (cats.length === 0) { errEl.textContent = '対象を選択してください'; return; }
+  const markets = selectedMarkets();
+  if (markets.length === 0 || (markets.includes('jpx') && cats.length === 0 && markets.length === 1)) {
+    errEl.textContent = '対象を選択してください'; return;
+  }
 
   RESULTS = DATA.stocks.filter(
-    (s) => cats.includes(s.cat) && ScreenConditions.evaluateConditions(s, conds)
+    (s) => (s.markets || ['jpx']).some(m => markets.includes(m)) &&
+      (!(s.markets || ['jpx']).includes('jpx') || cats.includes(s.cat)) &&
+      ScreenConditions.evaluateConditions(effectiveStock(s), conds)
   );
   renderResults();
 }
@@ -288,9 +317,29 @@ function sortBy(key) {
   renderResults();
 }
 
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function copyCode(code) {
+  try {
+    await navigator.clipboard.writeText(code);
+  } catch (_) {
+    const input = document.createElement('textarea');
+    input.value = code; document.body.appendChild(input); input.select();
+    const ok = document.execCommand('copy'); input.remove();
+    if (!ok) { alert('コピーできませんでした'); return; }
+  }
+  const msg = document.getElementById('runErr');
+  msg.className = 'ok'; msg.textContent = `${code} をコピーしました`;
+}
+
+function copyCurrentCode() { if (curStock) copyCode(curStock.code); }
+
 function renderResults() {
   const rows = [...RESULTS].sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
+    if (['close','r3','r1','rw'].includes(sortKey)) { x = effectiveStock(a)[sortKey]; y = effectiveStock(b)[sortKey]; }
     if (sortKey === 'code') { x = a.code; y = b.code; return sortDesc ? y.localeCompare(x) : x.localeCompare(y); }
     x = x ?? -1e9; y = y ?? -1e9;
     return sortDesc ? y - x : x - y;
@@ -298,13 +347,14 @@ function renderResults() {
   document.getElementById('resultCard').hidden = false;
   document.getElementById('resultCount').textContent = `${rows.length} 銘柄`;
   document.getElementById('resultBody').innerHTML = rows.map(r => `
-    <tr onclick="openDetail('${r.code}')">
-      <td>${r.code} <span class="tag">${CATS[r.cat]||r.cat}</span></td>
-      <td class="name">${r.name} <span class="chev">›</span></td>
-      <td>${r.close != null ? r.close.toLocaleString() : '-'}</td>
-      <td>${fmtPct(r.r3)}</td>
-      <td>${fmtPct(r.r1)}</td>
-      <td>${fmtPct(r.rw)}</td>
+    <tr onclick="openDetail('${escapeHTML(r.code)}')">
+      <td><button class="code-btn" onclick="event.stopPropagation();copyCode('${escapeHTML(r.code)}')" aria-label="${escapeHTML(r.code)}をコピー">${escapeHTML(r.code)}</button> <span class="tag">${(r.markets||[]).filter(m=>m!=='jpx').map(m=>m==='dow'?'NYダウ':'NASDAQ-100').join('/') || CATS[r.cat]||r.cat}</span></td>
+      <td class="name">${escapeHTML(r.name)} <span class="chev">›</span></td>
+      <td>${r.close != null ? r.close.toLocaleString() + (r.currency==='USD'?' $':' ¥') : '-'}</td>
+      <td>${r.after != null ? r.after.toLocaleString() + ' $<br>' + fmtPct(r.after_pct) : '-'}</td>
+      <td>${fmtPct(effectiveStock(r).r3)}</td>
+      <td>${fmtPct(effectiveStock(r).r1)}</td>
+      <td>${fmtPct(effectiveStock(r).rw)}</td>
     </tr>`).join('');
 }
 
@@ -322,10 +372,12 @@ function openDetail(code) {
   const m = document.getElementById('detailModal');
   m.hidden = false;
   document.getElementById('dTitle').textContent = curStock.name;
-  document.getElementById('dCode').textContent = `${curStock.code}・${CATS[curStock.cat] || curStock.cat}`;
+  document.getElementById('dCode').textContent = `${curStock.code}・${(curStock.markets||[]).filter(m=>m!=='jpx').map(m=>m==='dow'?'NYダウ':'NASDAQ-100').join('/') || CATS[curStock.cat] || curStock.cat} (タップでコピー)`;
   document.getElementById('dStats').innerHTML = [
-    ['終値', curStock.close != null ? curStock.close.toLocaleString() + ' 円' : '-'],
-    ['3ヶ月', fmtPct(curStock.r3)], ['1ヶ月', fmtPct(curStock.r1)], ['1週間', fmtPct(curStock.rw)],
+    ['終値', curStock.close != null ? curStock.close.toLocaleString() + (curStock.currency==='USD'?' $':' 円') : '-'],
+    ['時間外', curStock.after != null ? curStock.after.toLocaleString() + ' $ (' + fmtPct(curStock.after_pct) + ')' : '-'],
+    ['時間外時刻 (米東部)', curStock.after_at ? escapeHTML(curStock.after_at.slice(0,16).replace('T',' ')) : '-'],
+    ['3ヶ月', fmtPct(effectiveStock(curStock).r3)], ['1ヶ月', fmtPct(effectiveStock(curStock).r1)], ['1週間', fmtPct(effectiveStock(curStock).rw)],
   ].map(([l, v]) => `<div class="stat"><span class="lbl">${l}</span><b>${v}</b></div>`).join('');
   document.getElementById('dPeriods').innerHTML = PERIODS.map((p, i) =>
     `<button class="${i === curPeriod ? 'active' : ''}" onclick="setPeriod(${i})">${p.label}</button>`).join('');
@@ -404,7 +456,9 @@ function buildChartHTML(dates, close, vol) {
 // ---- 自然言語 → 条件(Anthropic API 直接呼び出し / model-routing: haiku) ----
 const NL_SCHEMA = {
   type: "object",
-  properties: { conditions: { type: "array", items: {
+  properties: { markets: { type: "array", items: {type:"string",enum:["jpx","dow","nasdaq100"]} },
+    price_mode: { type: "string", enum: ["close", "after"] },
+    conditions: { type: "array", items: {
     type: "object",
     properties: {
       type: { type: "string", enum: ["consecutive_monthly_gain","rise_from_recent_low","period_return","price_range","min_avg_volume"] },
@@ -415,46 +469,77 @@ const NL_SCHEMA = {
       min: { type: ["number","null"] }, max: { type: ["number","null"] },
       days: { type: ["integer","null"], enum: [5,20,60,null] }, min_volume: { type: ["number","null"] },
     },
-    required: ["type"], additionalProperties: false,
+    required: ["type","months","min_pct","lookback_months","period","op","pct","min","max","days","min_volume"], additionalProperties: false,
   } } },
-  required: ["conditions"], additionalProperties: false,
+  required: ["markets","price_mode","conditions"], additionalProperties: false,
 };
 const NL_SYSTEM = `あなたは株式スクリーニング条件のパーサーです。日本語の条件文を指定スキーマの JSON 条件リストに変換してください。
 条件タイプ: consecutive_monthly_gain(N ヶ月連続で毎月 min_pct% 以上上昇: months,min_pct)/ rise_from_recent_low(直近 lookback_months ヶ月の安値から min_pct% 以上上昇)/ period_return(期間 period[3m/1m/1w] の騰落率が op[>=/<=] pct%)/ price_range(株価 min〜max 円)/ min_avg_volume(直近 days[5/20/60] 日の平均出来高が min_volume 以上)。
-使わないフィールドは null。解釈できない要素は無視し、確実に読み取れた条件のみ出力。`;
+使わないフィールドは null。markets は明示された市場だけ指定し、省略時は空配列。price_mode はアフター・時間外価格の指定があれば after、それ以外は close。
+複数条件は AND。市場ごとの通貨は東証が円、米国が米ドル。解釈できない条件は無視し、確実に読み取れた条件のみ出力。`;
+
+const FIELDS = {
+  consecutive_monthly_gain: ['months','min_pct'], rise_from_recent_low: ['lookback_months','min_pct'],
+  period_return: ['period','op','pct'], price_range: ['min','max'], min_avg_volume: ['days','min_volume'],
+};
+
+function cleanNLCondition(c) {
+  if (!c || !FIELDS[c.type]) return null;
+  const out = {type:c.type};
+  for (const field of FIELDS[c.type]) if (c[field] != null) out[field] = c[field];
+  if (c.type === 'consecutive_monthly_gain' && (!Number.isInteger(out.months) || out.months < 1 || out.months > 12 || !Number.isFinite(out.min_pct))) return null;
+  if (c.type === 'rise_from_recent_low' && (!Number.isInteger(out.lookback_months) || out.lookback_months < 1 || out.lookback_months > 12 || !Number.isFinite(out.min_pct))) return null;
+  if (c.type === 'period_return' && (!['3m','1m','1w'].includes(out.period) || !['>=','<='].includes(out.op) || !Number.isFinite(out.pct))) return null;
+  if (c.type === 'price_range' && (out.min == null && out.max == null || (out.min != null && (!Number.isFinite(out.min) || out.min < 0)) || (out.max != null && (!Number.isFinite(out.max) || out.max < 0)))) return null;
+  if (c.type === 'min_avg_volume' && (![5,20,60].includes(out.days) || !Number.isFinite(out.min_volume) || out.min_volume < 0)) return null;
+  return out;
+}
+
+function setProvider(provider) {
+  localStorage.setItem('api_provider', provider);
+  document.getElementById('keyStatus').textContent = localStorage.getItem(provider + '_api_key') ? `${provider} のキーを保存済み` : `${provider} のキーは未設定`;
+}
 
 async function parseNL() {
   const msg = document.getElementById('nlMsg');
   const btn = document.getElementById('nlBtn');
   const text = document.getElementById('nlText').value.trim();
   if (!text) return;
-  const key = localStorage.getItem('anthropic_api_key');
+  const provider = document.getElementById('apiProvider').value;
+  const key = localStorage.getItem(provider + '_api_key');
   if (!key) { msg.className='err'; msg.textContent='先に設定から API キーを保存してください'; return; }
   msg.className=''; msg.textContent='変換中...'; btn.disabled = true;
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const openai = provider === 'openai';
+    const res = await fetch(openai ? 'https://api.openai.com/v1/chat/completions' : 'https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5', max_tokens: 1024, system: NL_SYSTEM,
-        output_config: { format: { type: 'json_schema', schema: NL_SCHEMA } },
-        messages: [{ role: 'user', content: text }],
+      headers: openai ? {'content-type':'application/json', Authorization:`Bearer ${key}`} :
+        {'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body: JSON.stringify(openai ? {
+        model:'gpt-4.1-mini', messages:[{role:'system',content:NL_SYSTEM},{role:'user',content:text}],
+        response_format:{type:'json_schema',json_schema:{name:'screening_conditions',strict:true,schema:NL_SCHEMA}},
+      } : {
+        model:'claude-haiku-4-5', max_tokens:1024, system:NL_SYSTEM,
+        output_config:{format:{type:'json_schema',schema:NL_SCHEMA}},
+        messages:[{role:'user',content:text}],
       }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || res.statusText);
-    const raw = data.content.find(b => b.type === 'text').text;
-    const conds = (JSON.parse(raw).conditions || [])
-      .map(c => Object.fromEntries(Object.entries(c).filter(([, v]) => v !== null)));
-    if (conds.length === 0) throw new Error('条件を読み取れませんでした');
+    const raw = openai ? data.choices?.[0]?.message?.content : data.content?.find(b => b.type === 'text')?.text;
+    if (!raw) throw new Error('API が条件を返しませんでした');
+    const parsed = JSON.parse(raw);
+    const conds = (parsed.conditions || []).map(cleanNLCondition).filter(Boolean);
+    if (conds.length === 0 && !(Array.isArray(parsed.markets) && parsed.markets.length))
+      throw new Error('条件を読み取れませんでした');
+    if (Array.isArray(parsed.markets) && parsed.markets.length) {
+      for (const [id, market] of [['marketJpx','jpx'],['marketDow','dow'],['marketNasdaq','nasdaq100']])
+        document.getElementById(id).checked = parsed.markets.includes(market);
+    }
+    if (parsed.price_mode === 'after') document.getElementById('useAfter').checked = true;
     conds.forEach(c => CONDS.push(c));
     renderConds();
-    msg.className='ok'; msg.textContent = `${conds.length} 件の条件を追加しました`;
+    msg.className='ok'; msg.textContent = `${conds.length} 件の条件を追加し、対象を更新しました`;
   } catch (e) {
     msg.className='err'; msg.textContent = '変換失敗: ' + e.message;
   } finally { btn.disabled = false; }
@@ -464,13 +549,17 @@ function saveKey() {
   const key = document.getElementById('apiKey').value.trim();
   const msg = document.getElementById('keyMsg');
   if (!key) return;
-  localStorage.setItem('anthropic_api_key', key);
+  const provider = document.getElementById('apiProvider').value;
+  localStorage.setItem(provider + '_api_key', key);
   document.getElementById('apiKey').value = '';
   msg.className='ok'; msg.textContent = '保存しました(この端末のみ)';
+  setProvider(provider);
 }
 
 // ---- 初期化 ----
 (async () => {
+  document.getElementById('apiProvider').value = localStorage.getItem('api_provider') || 'openai';
+  setProvider(document.getElementById('apiProvider').value);
   const metaEl = document.getElementById('meta');
   try {
     const res = await fetch('./data/screening.json', { cache: 'no-store' });
@@ -478,7 +567,7 @@ function saveKey() {
     DATA = await res.json();
     const c = DATA.counts || {};
     const parts = Object.keys(CATS).filter(k => c[k]).map(k => `${CATS[k]} ${c[k]}`);
-    metaEl.innerHTML = `基準日: <b>${DATA.base_date}</b>(${DATA.total} 銘柄 / ${parts.join(' ・ ')})<br>更新: ${DATA.generated_at || '-'}`;
+    metaEl.innerHTML = `基準日: 東証 <b>${escapeHTML(DATA.base_date)}</b> / 米国 <b>${escapeHTML(DATA.us_base_date || '-')}</b><br>${DATA.total} 銘柄 (${parts.join(' ・ ')})・NYダウ ${DATA.market_counts?.dow || 0}・NASDAQ-100 ${DATA.market_counts?.nasdaq100 || 0}<br>更新: ${escapeHTML(DATA.generated_at || '-')}`;
   } catch (e) {
     metaEl.className = 'err';
     metaEl.textContent = 'データ未生成です。GitHub Actions の「定期スクリーニング」を実行してください。';

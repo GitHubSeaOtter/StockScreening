@@ -17,7 +17,7 @@ CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
 # JPX が公開している東証上場銘柄一覧(月次更新)
 JPX_LIST_URL = (
     "https://www.jpx.co.jp/markets/statistics-equities/misc/"
-    "tvdivq0000001vg2-att/data_j.xls"
+    "tvdivq0000001vg2-att/data_j.xlsx"
 )
 USER_AGENT = "Mozilla/5.0 (compatible; StockScreener/1.0)"
 

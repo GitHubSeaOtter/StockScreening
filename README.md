@@ -1,14 +1,14 @@
 # 株スクリーニングアプリ
 
-東証上場銘柄を対象に、テクニカル条件でスクリーニングする Web アプリです。
+東証上場銘柄と NYダウ・NASDAQ-100 構成銘柄を対象に、テクニカル条件でスクリーニングする Web アプリです。
 
-**方式: GitHub Actions で定期実行 → データ生成 → GitHub Pages に直接デプロイ。**
+**方式: GitHub Actions で更新時・定期実行 → データ生成 → GitHub Pages に直接デプロイ。**
 サーバーを常時起動する必要がなく、iPhone のブラウザからいつでも結果を見られます。
 生成データは Git にコミットせず、ビルド成果物として毎回デプロイするためリポジトリは肥大化しません。
 
 ```
 GitHub Actions(平日 17:00 JST 定期実行)
-  └─ build_dataset.py … JPX 銘柄一覧 + yfinance 株価を取得し、
+  └─ build_dataset.py … JPX・米国指数の銘柄一覧 + yfinance 株価を取得し、
        ├─ 全銘柄の特徴量を計算 → docs/data/screening.json
        └─ 銘柄ごとの日足チャート     → docs/data/charts/<コード>.json
      生成した docs/ を Pages 成果物としてアップロード → deploy-pages でデプロイ
@@ -19,18 +19,19 @@ GitHub Pages
 
 ## 機能
 
-- **対象銘柄**: 東証上場銘柄(JPX 公式一覧を自動取得)。**株 / 信託(REIT等)/ ETF / 純金信託・商品(コモディティ)** でフィルタリング可能
+- **対象銘柄**: 東証上場銘柄(JPX 公式一覧)と NYダウ・NASDAQ-100 の構成銘柄(Wikipedia の公開表)を毎回取得。東証は **株 / 信託(REIT等)/ ETF / 純金信託・商品** で絞り込み可能
 - **条件指定**(複数条件を AND で組み合わせ):
   - N ヶ月連続で毎月 X% 以上上昇(例: 3ヶ月連続で 10% 以上増加)
   - 直近 N ヶ月以内に更新した安値から X% 以上上昇
   - 期間騰落率(3ヶ月 / 1ヶ月 / 1週間)が X% 以上・以下
   - 株価レンジ / 平均出来高(5・20・60日)
-- **自然言語での条件指定**(任意): 「3ヶ月連続で10%以上上昇、株価は500円から3000円」のような文章を
-  Claude API(claude-haiku-4-5)で条件に変換。API キー未設定でも手動指定で全機能利用可
+- **自然言語での条件指定**(任意): OpenAI API(gpt-4.1-mini)または Anthropic API で、市場・時間外価格・複数条件を文章から設定。API キー未設定でも手動指定で利用可能
+- **時間外価格**: 米国株の当日 16:00–20:00 米東部時間の最終価格と終値との差を表示。指定時は価格条件・騰落率条件を時間外価格で評価。データがない銘柄は終値を使用
+- **コードのコピー**: 結果や詳細の銘柄コードをタップするとクリップボードにコピー。iPhone の「株価」アプリに貼り付け可能
 - **結果表示**: 銘柄名・銘柄コード・終値・上昇率(3ヶ月 / 1ヶ月 / 1週間)をソート可能なリストで表示
 - **銘柄詳細・株価チャート**: 結果の行をタップすると、その銘柄の詳細と株価チャートを表示。
   チャートの期間(1週 / 1ヶ月 / 3ヶ月 / 6ヶ月 / 1年)を切り替え可能
-- **基準日**: 前営業日。ただし営業日の日本時間 15:30 以降は当日(祝日・年末年始を自動考慮)
+- **基準日**: 東証は日本時間 15:30、米国は米東部時間 16:00 を基準に判定
 
 ## セットアップ(GitHub 上で運用)
 
@@ -38,7 +39,7 @@ GitHub Pages
 2. **Settings → Pages** で Source を **「GitHub Actions」** に設定
    (「Deploy from a branch」ではありません。ワークフローが直接デプロイします)
 3. **Actions → 定期スクリーニング → Run workflow** で初回データを生成・デプロイ
-   (以降は平日 17:00 JST に自動実行・自動デプロイ)
+   (以降は平日 17:00 JST と米国時間外取引終了後に自動実行・自動デプロイ)
 4. iPhone の Safari で GitHub Pages の URL(`https://<ユーザー名>.github.io/<リポジトリ名>/`)を開く
 
 > ⏰ **cron による定期実行はデフォルトブランチのワークフローのみ有効**です(GitHub の仕様)。
@@ -52,13 +53,13 @@ python build_dataset.py              # docs/data/screening.json + charts/*.json 
 python -m http.server -d docs 8000   # http://localhost:8000/ で確認
 ```
 
-※ `www.jpx.co.jp` と `query1.finance.yahoo.com` への HTTPS アクセスが必要です。
+※ `www.jpx.co.jp`、`en.wikipedia.org`、Yahoo Finance への HTTPS アクセスが必要です。
 
 ## LLM API キー(任意)
 
 自然言語での条件指定を使う場合のみ必要です。ページ下部の「⚙️ 設定」から
-Anthropic API キーを保存すると、**この端末のブラウザ(localStorage)にのみ保存**され、
-変換時に直接 Anthropic API へ送信されます。サーバーには保存されません。
+OpenAI または Anthropic の API キーを保存すると、**この端末のブラウザ(localStorage)にのみ保存**され、
+変換時に選択した API へ直接送信されます。共有端末では保存キーに注意してください。
 
 ## テスト
 
@@ -76,7 +77,8 @@ node tests/parity.mjs          # JS 側が完全一致することを検証
 build_dataset.py       Actions から実行するデータ生成スクリプト
 app/
   market_calendar.py   基準日ロジック(営業日・15:30 判定)
-  data_fetcher.py      JPX 銘柄一覧 + yfinance 株価取得・分類(純金信託→commodity)
+  data_fetcher.py      JPX 銘柄一覧 + yfinance 日足取得・分類
+  us_markets.py        NYダウ・NASDAQ-100 構成銘柄 + 米国時間外価格
   features.py          1銘柄あたりの特徴量ベクトル計算
   conditions.py        条件評価(Python リファレンス実装)
 docs/                  GitHub Pages 公開ディレクトリ
@@ -93,5 +95,6 @@ tests/                 Python↔JS parity テスト
 
 ## データソース
 
-- 銘柄一覧: JPX(日本取引所グループ)公開の東証上場銘柄一覧 `data_j.xls`
-- 株価: Yahoo Finance(yfinance、ティッカーは `XXXX.T`)
+- 銘柄一覧: JPX(日本取引所グループ)公開の東証上場銘柄一覧 `data_j.xlsx`
+- 米国指数構成銘柄: Wikipedia の Dow Jones Industrial Average / Nasdaq-100 の構成銘柄表
+- 株価: Yahoo Finance(yfinance、時間外価格は遅延や欠損の可能性あり)

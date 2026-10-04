@@ -11,7 +11,9 @@ import json
 import logging
 from pathlib import Path
 
-from app import data_fetcher, features, market_calendar
+import pandas as pd
+
+from app import data_fetcher, features, market_calendar, us_markets
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -47,15 +49,19 @@ def write_chart(df, row, base) -> None:
 
 def main() -> None:
     base = market_calendar.base_date()
-    logger.info("基準日: %s", base)
+    us_base = us_markets.us_base_date()
+    logger.info("基準日: 東証 %s / 米国 %s", base, us_base)
 
-    meta = data_fetcher.fetch_ticker_list()
+    jp_meta = data_fetcher.fetch_ticker_list()
+    jp_meta["markets"] = [["jpx"] for _ in range(len(jp_meta))]
+    us_meta = us_markets.fetch_constituents()
+    meta = pd.concat([jp_meta, us_meta], ignore_index=True)
     tickers = meta["ticker"].tolist()
     logger.info("対象: %d 銘柄", len(tickers))
 
     prices = data_fetcher.fetch_prices(
         tickers,
-        base,
+        max(base, us_base),
         progress_cb=lambda d, t: logger.info("株価取得 %d/%d", d, t),
     )
 
@@ -66,22 +72,42 @@ def main() -> None:
     for ticker, df in prices.items():
         if ticker not in meta_by_ticker.index:
             continue
-        feat = features.compute_features(df, base)
+        row = meta_by_ticker.loc[ticker]
+        stock_base = base if "jpx" in row["markets"] else us_base
+        feat = features.compute_features(df, stock_base)
         if feat["close"] is None:
             continue
-        row = meta_by_ticker.loc[ticker]
+        # 米国祝日など、対象日の終値が存在しない場合は古い値を公開しない。
+        if "jpx" not in row["markets"] and stock_base not in df.index:
+            continue
         feat["code"] = row["code"]
         feat["name"] = row["name"]
         feat["cat"] = row["category"]
+        feat["markets"] = row["markets"]
+        feat["currency"] = "JPY" if "jpx" in row["markets"] else "USD"
         stocks.append(feat)
-        write_chart(df, row, base)
+        write_chart(df, row, stock_base)
+
+    us_stocks = {s["code"]: s for s in stocks if "jpx" not in s["markets"]}
+    after = us_markets.fetch_after_hours(list(us_stocks), {code: s["close"] for code, s in us_stocks.items()}, us_base)
+    for code, quote in after.items():
+        us_stocks[code].update(quote)
 
     counts: dict[str, int] = {}
     for s in stocks:
         counts[s["cat"]] = counts.get(s["cat"], 0) + 1
+    market_counts = {market: sum(market in s["markets"] for s in stocks)
+                     for market in ("jpx", "dow", "nasdaq100")}
+    for market, expected in (("jpx", len(jp_meta)),
+                             ("dow", sum("dow" in m for m in us_meta["markets"])),
+                             ("nasdaq100", sum("nasdaq100" in m for m in us_meta["markets"]))):
+        if expected and market_counts[market] < expected * 0.7:
+            raise RuntimeError(f"{market} の株価取得率が低すぎます: {market_counts[market]}/{expected}")
 
     payload = {
         "base_date": base.isoformat(),
+        "us_base_date": us_base.isoformat(),
+        "market_counts": market_counts,
         "generated_at": dt.datetime.now(market_calendar.JST).isoformat(timespec="seconds"),
         "counts": counts,
         "total": len(stocks),
