@@ -45,6 +45,8 @@ jobs:
         run: python build_dataset.py
 
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: 成果物(docs/)をアップロード
         uses: actions/upload-pages-artifact@v3
