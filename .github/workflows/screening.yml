@@ -41,6 +41,13 @@ jobs:
           python tests/gen_fixtures.py
           node tests/parity.mjs
           node tests/nl_responses.mjs
+          node tests/scripts.mjs
+
+      - uses: actions/cache@v4
+        with:
+          path: cache/fundamentals.json
+          key: ${{ runner.os }}-fundamentals-v1-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-fundamentals-v1-
 
       - name: スクリーニングデータ + チャートを生成
         run: python build_dataset.py

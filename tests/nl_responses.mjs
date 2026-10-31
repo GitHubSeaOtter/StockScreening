@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const ScreenScript = require('../docs/screen-script.js');
 const ScreenConditions = require('../docs/conditions.js');
 const html = fs.readFileSync(new URL('../docs/index.html', import.meta.url), 'utf8');
 const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
@@ -24,17 +25,19 @@ el('catStock').checked = true;
 el('marketJpx').checked = true;
 let apiCall;
 const stock = {code:'1301',name:'テスト株',cat:'stock',markets:['jpx'],currency:'JPY',close:120,
-  mc:Array(13).fill(120),wc:[120,110,100,90,80,...Array(8).fill(null)],
+  dividend_yield:4,daily:[90,100,110,120],mc:Array(13).fill(120),wc:[120,110,100,90,80,...Array(8).fill(null)],
   lm:Array(13).fill(100),r3:0,r1:0,rw:0,v:{'5':100,'20':100,'60':100}};
-const flat = {...stock,code:'1302',name:'横ばい株',wc:Array(13).fill(120)};
+const flat = {...stock,dividend_yield:null,code:'1302',name:'横ばい株',wc:Array(13).fill(120)};
 const context = vm.createContext({
-  document:{getElementById:el}, ScreenConditions,
+  document:{getElementById:el}, ScreenConditions, ScreenScript,
   localStorage:{getItem(key) {return key === 'openai_api_key' ? 'test-key' : null;},setItem() {}},
   fetch:async (url, options) => {
     if (url.includes('screening.json')) return {ok:true,json:async()=>({base_date:'2026-10-02',stocks:[stock,flat],total:2,counts:{stock:2}})};
     apiCall = {url,options};
     const input = JSON.parse(options.body).input;
-    const parsed = input.includes('RSI') ?
+    const parsed = input.includes('配当') ?
+      {markets:['jpx'],price_mode:'close',unhandled:[],conditions:[{type:'script',expression:'dividend_yield >= 3 && close > sma(2)'}]} :
+      input.includes('RSI') ?
       {markets:['jpx'],price_mode:'close',unhandled:['RSI'],conditions:[{type:'price_range',min:100,max:150}]} :
       input.includes('毎週') ?
       {markets:['jpx'],price_mode:'close',unhandled:[],conditions:[{type:'consecutive_period_return',unit:'week',periods:4,op:'>',pct:0}]} :
@@ -61,5 +64,9 @@ el('nlText').value = '株価100～150円、RSIは30以下';
 await vm.runInContext('parseNL()', context);
 assert.equal(el('nlMsg').className, 'err');
 assert.match(el('nlMsg').textContent, /RSI/);
+assert.equal(el('resultCount').textContent, '1 銘柄');
+el('nlText').value = '配当3%以上で2日移動平均より上';
+await vm.runInContext('parseNL()', context);
+assert.equal(el('nlMsg').className, 'ok');
 assert.equal(el('resultCount').textContent, '1 銘柄');
 console.log('Responses API から結果表示まで OK');

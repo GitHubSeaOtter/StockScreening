@@ -67,6 +67,8 @@ def compute_features(df: pd.DataFrame, base: dt.date) -> dict:
         v[str(w)] = round(float(tail["Volume"].mean())) if not tail.empty else None
 
     return {
+        "daily": [_round(float(x)) for x in below.tail(260)["Close"]],
+        "volumes": [int(x) if pd.notna(x) else None for x in below.tail(260)["Volume"]],
         "close": mc[0],
         "mc": mc,
         "wc": wc,

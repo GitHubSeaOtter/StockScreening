@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
+const S=require('../docs/screen-script.js');
+const f={close:120,daily:[80,90,100,110,120],volumes:[10,20,30,40,50],dividend_yield:4,entitlement_date:'2026-11-02',wc:[120,110,100,90,80]};
+assert.equal(S.evaluate(f,'dividend_yield >= 3 && close > sma(3)'),true);
+assert.equal(S.evaluate(f,'weekly_up(4) || dividend_yield > 10'),true);
+assert.equal(S.evaluate(f,'close >= high(5)*0.98'),true);
+assert.equal(S.evaluate(f,'change(4) == 50'),true);
+assert.equal(S.evaluate(f,'rsi(4) == 100'),true);
+assert.equal(S.evaluate(f,'rights_date >= "2026-11-01" && rights_date <= "2026-11-30"'),true);
+assert.equal(S.evaluate({},'! (dividend_yield > 3)'),false);
+assert.equal(S.evaluate({},'dividend_yield == 0'),false);
+assert.equal(S.evaluate(f,'close / 0 > 1'),false);
+assert.equal(S.evaluate(f,'sma(200) < 100'),false);
+for(const code of ['globalThis.alert(1)','fetch(1)','close = 0','constructor(1)','sma(3);close>0']) assert.throws(()=>S.compile(code));
+console.log('条件式・配当・日付・欠損値・実行制限 OK');

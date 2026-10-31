@@ -131,6 +131,17 @@
 </div>
 
 <div class="card">
+  <h2>条件の候補</h2>
+  <p class="hint">目的に合わせて選ぶ出発点です。将来の収益を保証するものではありません。選択すると現在の条件を置き換えて実行します。</p>
+  <div id="presets"></div>
+  <details><summary>配当・権利日の範囲を指定</summary>
+    <div class="row">配当利回り <input id="yieldMin" type="number" min="0" step="0.1" placeholder="下限"> 〜 <input id="yieldMax" type="number" min="0" step="0.1" placeholder="上限"> %</div>
+    <div class="row">権利付き最終日 <input id="rightsFrom" type="date"> 〜 <input id="rightsTo" type="date"></div>
+    <button class="small" onclick="addFinancialCondition()">条件に追加</button><div id="financialMsg" class="err"></div>
+  </details>
+  <p class="hint">配当は年間配当額÷取得時株価。予想値を優先し、なければ過去実績を使います。権利付き最終日は取得した権利落ち日の直前の取引日です。配当の権利日を対象とし、株主優待は含みません。日付が過去のままの場合や未取得の場合があります。</p>
+</div>
+<div class="card">
   <h2>条件(すべて AND)</h2>
   <div id="conds"></div>
   <div class="row">
@@ -140,6 +151,7 @@
     <button class="small" onclick="addCond('period_return')">＋期間騰落率</button>
     <button class="small" onclick="addCond('price_range')">＋株価レンジ</button>
     <button class="small" onclick="addCond('min_avg_volume')">＋出来高</button>
+    <button class="small" onclick="addCond('script')">＋条件式</button>
   </div>
   <div class="row"><label class="chk"><input type="checkbox" id="useAfter"> 米国株は直近の時間外価格で比較</label></div>
   <div class="hint">当日の時間外価格がない銘柄は終値で判定します。騰落率の表示も選択した価格に合わせます。価格条件の単位は東証が円、米国が米ドルです。</div>
@@ -148,6 +160,7 @@
     <textarea id="nlText" placeholder="例: 直近1ヶ月、毎週上昇している銘柄"></textarea>
     <div class="row"><button class="small" onclick="parseNL()" id="nlBtn">文章からスクリーニング</button></div>
     <div id="nlMsg"></div>
+    <p class="hint">例: 配当利回り3%以上で権利付き最終日まで30日以内、または20日移動平均より上でRSIが50未満</p>
   </details>
 </div>
 
@@ -163,6 +176,7 @@
     <table>
       <thead><tr>
         <th onclick="sortBy('code')">コード</th><th>銘柄名</th>
+        <th onclick="sortBy('dividend_yield')">配当利回り</th><th onclick="sortBy('entitlement_date')">権利付き最終日</th>
         <th onclick="sortBy('close')">終値</th><th onclick="sortBy('after')">時間外</th>
         <th onclick="sortBy('r3')">3ヶ月</th>
         <th onclick="sortBy('r1')">1ヶ月</th>
@@ -202,6 +216,7 @@
   </div>
 </div>
 
+<script src="screen-script.js"></script>
 <script src="conditions.js"></script>
 <script>
 const CATS = { stock: '株', trust: '信託', etf: 'ETF', commodity: '商品' };
@@ -210,7 +225,31 @@ const CONDS = [];
 let RESULTS = [];
 let sortKey = 'r3', sortDesc = true;
 
+const PRESETS = [
+ ['配当＋流動性','利回り3〜6%・平均出来高10万株以上。極端な高利回りを避ける出発点。','dividend_yield >= 3 && dividend_yield <= 6 && avg_volume(20) >= 100000'],
+ ['権利日が近い配当株','利回り3%以上・権利付き最終日まで0〜30暦日。権利落ちによる値下がりにも注意。','dividend_yield >= 3 && rights_days >= 0 && rights_days <= 30'],
+ ['上昇トレンド','20日平均＞60日平均・株価＞20日平均・63営業日の騰落率10%以上。','close > sma(20) && sma(20) > sma(60) && change(63) >= 10'],
+ ['毎週上昇＋流動性','直近4週で毎週上昇・20日平均出来高10万株以上。','weekly_up(4) && avg_volume(20) >= 100000'],
+ ['上昇基調の押し目','60日平均より上・14日RSIが35〜50。単純平均方式のRSI。','close > sma(60) && rsi(14) >= 35 && rsi(14) <= 50'],
+ ['高値圏の銘柄','252営業日の終値高値から2%以内・平均出来高10万株以上。','close >= high(252) * 0.98 && avg_volume(20) >= 100000'],
+ ['出来高急増','当日出来高が20日平均の2倍以上・前日比プラス。','volume_ratio >= 2 && change(1) > 0'],
+ ['値動きが比較的小さい','20営業日ボラティリティ年率25%以下・60日平均より上。','volatility(20) <= 25 && close > sma(60)'],
+];
+function usePreset(i) { CONDS.splice(0,CONDS.length,{type:'script',expression:PRESETS[i][2]}); renderConds(); runScreen(); }
+function addFinancialCondition() {
+  const parts=[], min=document.getElementById('yieldMin').value, max=document.getElementById('yieldMax').value;
+  const start=document.getElementById('rightsFrom').value, end=document.getElementById('rightsTo').value;
+  const msg=document.getElementById('financialMsg');msg.textContent='';
+  if((min!=='' && (+min<0 || !Number.isFinite(+min))) || (max!=='' && (+max<0 || !Number.isFinite(+max))) || (min!==''&&max!==''&&+min>+max) || (start&&end&&start>end)) {msg.textContent='範囲を確認してください';return;}
+  if(min!=='') parts.push('dividend_yield >= '+Number(min));
+  if(max!=='') parts.push('dividend_yield <= '+Number(max));
+  if(start) parts.push('rights_date >= '+JSON.stringify(start));
+  if(end) parts.push('rights_date <= '+JSON.stringify(end));
+  if(!parts.length) {msg.textContent='範囲を入力してください';return;}
+  addCond('script',{type:'script',expression:parts.join(' && ')});
+}
 const DEFS = {
+  script: {label:'条件式', make:()=>({type:'script',expression:'dividend_yield >= 3 && avg_volume(20) >= 100000'})},
   consecutive_monthly_gain: { label: '連続月間上昇', make: () => ({type:'consecutive_monthly_gain', months:3, min_pct:10}) },
   consecutive_period_return: { label: '週・月の連続騰落', make: () => ({type:'consecutive_period_return', unit:'week', periods:4, op:'>', pct:0}) },
   rise_from_recent_low:     { label: '安値からの上昇', make: () => ({type:'rise_from_recent_low', lookback_months:3, min_pct:10}) },
@@ -233,7 +272,9 @@ function renderConds() {
   CONDS.forEach((c, i) => {
     c._i = i;
     let body = '';
-    if (c.type === 'consecutive_monthly_gain')
+    if (c.type === 'script')
+      body = `<textarea aria-label="条件式" onchange="CONDS[${i}].expression=this.value">${escapeHTML(c.expression)}</textarea><details><summary>使える指標と書き方</summary><p class="hint">${escapeHTML(ScreenScript.help)}</p></details>`;
+    else if (c.type === 'consecutive_monthly_gain')
       body = `${num(c,'months','min=1 max=12')} ヶ月連続で、毎月 ${num(c,'min_pct')} % 以上上昇`;
     else if (c.type === 'consecutive_period_return')
       body = `直近 ${num(c,'periods','min=1 max=12')} <select onchange="CONDS[${i}].unit=this.value">
@@ -292,7 +333,8 @@ function effectiveStock(s) {
   if (!document.getElementById('useAfter').checked || s.after == null || s.close == null) return s;
   const ratio = s.after / s.close;
   const adjusted = { ...s, close: s.after, mc: [s.after, ...s.mc.slice(1)],
-    wc: s.wc ? [s.after, ...s.wc.slice(1)] : undefined };
+    wc: s.wc ? [s.after, ...s.wc.slice(1)] : undefined,
+    daily: s.daily ? [...s.daily.slice(0,-1),s.after] : undefined };
   for (const key of ['r3', 'r1', 'rw'])
     if (s[key] != null) adjusted[key] = ((1 + s[key] / 100) * ratio - 1) * 100;
   return adjusted;
@@ -303,6 +345,8 @@ function runScreen() {
   errEl.textContent = '';
   if (!DATA) { errEl.textContent = 'データが読み込まれていません'; return false; }
   const conds = CONDS.map(({_i, ...c}) => c);
+  try { conds.filter(c=>c.type==='script').forEach(c=>ScreenScript.compile(c.expression)); }
+  catch(e) {errEl.textContent=e.message;return false;}
   const cats = selectedCats();
   const markets = selectedMarkets();
   if (markets.length === 0 || (markets.includes('jpx') && cats.length === 0 && markets.length === 1)) {
@@ -353,6 +397,7 @@ function renderResults() {
   const rows = [...RESULTS].sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
     if (['close','r3','r1','rw'].includes(sortKey)) { x = effectiveStock(a)[sortKey]; y = effectiveStock(b)[sortKey]; }
+    if (sortKey === 'entitlement_date') {x=a.entitlement_date||'9999';y=b.entitlement_date||'9999';return sortDesc?y.localeCompare(x):x.localeCompare(y);}
     if (sortKey === 'code') { x = a.code; y = b.code; return sortDesc ? y.localeCompare(x) : x.localeCompare(y); }
     x = x ?? -1e9; y = y ?? -1e9;
     return sortDesc ? y - x : x - y;
@@ -363,6 +408,8 @@ function renderResults() {
     <tr onclick="openDetail('${escapeHTML(r.code)}')">
       <td><button class="code-btn" onclick="event.stopPropagation();copyCode('${escapeHTML(r.code)}')" aria-label="${escapeHTML(r.code)}をコピー">${escapeHTML(r.code)}</button> <span class="tag">${(r.markets||[]).filter(m=>m!=='jpx').map(m=>m==='dow'?'NYダウ':'NASDAQ-100').join('/') || CATS[r.cat]||r.cat}</span></td>
       <td class="name">${escapeHTML(r.name)} <span class="chev">›</span></td>
+      <td>${r.dividend_yield != null ? r.dividend_yield.toFixed(2)+'%<br>'+ (r.dividend_basis==='trailing'?'実績':'予想') : '-'}</td>
+      <td>${escapeHTML(r.entitlement_date || '-')}</td>
       <td>${r.close != null ? r.close.toLocaleString() + (r.currency==='USD'?' $':' ¥') : '-'}</td>
       <td>${r.after != null ? r.after.toLocaleString() + ' $<br>' + fmtPct(r.after_pct) : '-'}</td>
       <td>${fmtPct(effectiveStock(r).r3)}</td>
@@ -387,6 +434,10 @@ function openDetail(code) {
   document.getElementById('dTitle').textContent = curStock.name;
   document.getElementById('dCode').textContent = `${curStock.code}・${(curStock.markets||[]).filter(m=>m!=='jpx').map(m=>m==='dow'?'NYダウ':'NASDAQ-100').join('/') || CATS[curStock.cat] || curStock.cat} (タップでコピー)`;
   document.getElementById('dStats').innerHTML = [
+    ['配当利回り', curStock.dividend_yield != null ? curStock.dividend_yield.toFixed(2)+'% ('+(curStock.dividend_basis==='trailing'?'実績':'予想')+')' : '-'],
+    ['権利付き最終日', escapeHTML(curStock.entitlement_date || '-')],
+    ['権利落ち日', escapeHTML(curStock.ex_dividend_date || '-')],
+    ['配当データ取得日', escapeHTML(curStock.fundamentals_at?.slice(0,10) || '-')],
     ['終値', curStock.close != null ? curStock.close.toLocaleString() + (curStock.currency==='USD'?' $':' 円') : '-'],
     ['時間外', curStock.after != null ? curStock.after.toLocaleString() + ' $ (' + fmtPct(curStock.after_pct) + ')' : '-'],
     ['時間外時刻 (米東部)', curStock.after_at ? escapeHTML(curStock.after_at.slice(0,16).replace('T',' ')) : '-'],
@@ -475,7 +526,8 @@ const NL_SCHEMA = {
     conditions: { type: "array", items: {
     type: "object",
     properties: {
-      type: { type: "string", enum: ["consecutive_monthly_gain","consecutive_period_return","rise_from_recent_low","period_return","price_range","min_avg_volume"] },
+      type: { type: "string", enum: ["script","consecutive_monthly_gain","consecutive_period_return","rise_from_recent_low","period_return","price_range","min_avg_volume"] },
+      expression: { type: ["string","null"] },
       months: { type: ["integer","null"] }, min_pct: { type: ["number","null"] },
       unit: { type: ["string","null"], enum: ["week","month",null] },
       periods: { type: ["integer","null"] },
@@ -485,7 +537,7 @@ const NL_SCHEMA = {
       min: { type: ["number","null"] }, max: { type: ["number","null"] },
       days: { type: ["integer","null"], enum: [5,20,60,null] }, min_volume: { type: ["number","null"] },
     },
-    required: ["type","months","min_pct","unit","periods","lookback_months","period","op","pct","min","max","days","min_volume"], additionalProperties: false,
+    required: ["type","expression","months","min_pct","unit","periods","lookback_months","period","op","pct","min","max","days","min_volume"], additionalProperties: false,
   } } },
   required: ["markets","price_mode","unhandled","conditions"], additionalProperties: false,
 };
@@ -493,9 +545,10 @@ const NL_SYSTEM = `あなたは株式スクリーニング条件のパーサー�
 条件タイプ: consecutive_monthly_gain(N ヶ月連続で毎月 min_pct% 以上上昇: months,min_pct)/ consecutive_period_return(直近 periods 個の各 unit[week/month] 期間の騰落率が op[>,>=,<,<=] pct%: unit,periods,op,pct)/ rise_from_recent_low(直近 lookback_months ヶ月の安値から min_pct% 以上上昇)/ period_return(期間 period[3m/1m/1w] の騰落率が op[>=/<=] pct%)/ price_range(株価 min〜max 円)/ min_avg_volume(直近 days[5/20/60] 日の平均出来高が min_volume 以上)。
 「1ヶ月間、毎週上昇」は consecutive_period_return(unit=week,periods=4,op=>,pct=0)。各週は基準日から7日ずつ遡った終値間の比較であり、暦の週末固定ではない。「毎週下落」は op=<,pct=0。明示された割合以上の連続上昇なら op=>=。期間は最大12週または12ヶ月。
 使わないフィールドは null。markets は明示された市場だけ指定し、省略時は空配列。price_mode はアフター・時間外価格の指定があれば after、それ以外は close。
-複数条件は AND。市場ごとの通貨は東証が円、米国が米ドル。条件を表現できない部分は unhandled に原文の短い抜粋を入れ、黙って省略しない。すべて解釈できた場合は空配列。`;
+複数条件は AND。市場ごとの通貨は東証が円、米国が米ドル。条件を表現できない部分は unhandled に原文の短い抜粋を入れ、黙って省略しない。すべて解釈できた場合は空配列。\n複雑な条件、OR、配当、権利日、移動平均、RSIなどは type=script,expression に条件式を生成する。他フィールドはnull。${ScreenScript.help}\n例: 配当3%以上で権利日30日以内 => dividend_yield >= 3 && rights_days >= 0 && rights_days <= 30。変数や関数を捏造しない。`;
 
 const FIELDS = {
+  script: ['expression'],
   consecutive_monthly_gain: ['months','min_pct'], rise_from_recent_low: ['lookback_months','min_pct'],
   consecutive_period_return: ['unit','periods','op','pct'],
   period_return: ['period','op','pct'], price_range: ['min','max'], min_avg_volume: ['days','min_volume'],
@@ -505,6 +558,7 @@ function cleanNLCondition(c) {
   if (!c || !FIELDS[c.type]) return null;
   const out = {type:c.type};
   for (const field of FIELDS[c.type]) if (c[field] != null) out[field] = c[field];
+  if (c.type === 'script') {try {ScreenScript.compile(out.expression);} catch(e) {return null;} }
   if (c.type === 'consecutive_monthly_gain' && (!Number.isInteger(out.months) || out.months < 1 || out.months > 12 || !Number.isFinite(out.min_pct))) return null;
   if (c.type === 'consecutive_period_return' && (!['week','month'].includes(out.unit) || !Number.isInteger(out.periods) || out.periods < 1 || out.periods > 12 || !['>','>=','<','<='].includes(out.op) || !Number.isFinite(out.pct))) return null;
   if (c.type === 'rise_from_recent_low' && (!Number.isInteger(out.lookback_months) || out.lookback_months < 1 || out.lookback_months > 12 || !Number.isFinite(out.min_pct))) return null;
@@ -586,6 +640,7 @@ function saveKey() {
 (async () => {
   document.getElementById('apiProvider').value = localStorage.getItem('api_provider') || 'openai';
   setProvider(document.getElementById('apiProvider').value);
+  document.getElementById('presets').innerHTML = PRESETS.map(([name,desc],i)=>`<div class="cond"><button class="small" onclick="usePreset(${i})">${name}</button><p class="hint">${desc}</p></div>`).join('');
   const metaEl = document.getElementById('meta');
   try {
     const res = await fetch('./data/screening.json', { cache: 'no-store' });
@@ -594,6 +649,7 @@ function saveKey() {
     const c = DATA.counts || {};
     const parts = Object.keys(CATS).filter(k => c[k]).map(k => `${CATS[k]} ${c[k]}`);
     metaEl.innerHTML = `基準日: 東証 <b>${escapeHTML(DATA.base_date)}</b> / 米国 <b>${escapeHTML(DATA.us_base_date || '-')}</b><br>${DATA.total} 銘柄 (${parts.join(' ・ ')})・NYダウ ${DATA.market_counts?.dow || 0}・NASDAQ-100 ${DATA.market_counts?.nasdaq100 || 0}<br>更新: ${escapeHTML(DATA.generated_at || '-')}`;
+    metaEl.innerHTML += `<br>配当利回り取得: ${DATA.financial_counts?.dividend_yield || 0} / 権利日取得: ${DATA.financial_counts?.entitlement_date || 0} 銘柄`;
   } catch (e) {
     metaEl.className = 'err';
     metaEl.textContent = 'データ未生成です。GitHub Actions の「定期スクリーニング」を実行してください。';

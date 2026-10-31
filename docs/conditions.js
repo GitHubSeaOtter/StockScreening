@@ -1,11 +1,12 @@
 // 特徴量ベクトルに対する条件評価(ブラウザ / Node 共用)。
 // app/conditions.py と同一ロジック。tests/ の parity テストで一致を検証する。
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.ScreenConditions = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  if (typeof module === "object" && module.exports) module.exports = factory(require("./screen-script.js"));
+  else root.ScreenConditions = factory(root.ScreenScript);
+})(typeof self !== "undefined" ? self : this, function (scripts) {
   function evalCond(f, c) {
     switch (c.type) {
+      case "script": return scripts.evaluate(f, c.expression);
       case "consecutive_period_return": {
         const series = c.unit === 'week' ? f.wc : c.unit === 'month' ? f.mc : null;
         const periods = c.periods;

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from app import data_fetcher, features, market_calendar, us_markets
+from app import data_fetcher, features, market_calendar, us_markets, fundamentals
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -65,6 +65,9 @@ def main() -> None:
         progress_cb=lambda d, t: logger.info("株価取得 %d/%d", d, t),
     )
 
+    financial = fundamentals.fetch_fundamentals(tickers)
+    if not financial:
+        raise RuntimeError("配当データを取得できませんでした。公開を停止します")
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 
     meta_by_ticker = meta.set_index("ticker")
@@ -80,6 +83,7 @@ def main() -> None:
         # 米国祝日など、対象日の終値が存在しない場合は古い値を公開しない。
         if "jpx" not in row["markets"] and stock_base not in df.index:
             continue
+        feat.update(financial.get(ticker, {}))
         feat["code"] = row["code"]
         feat["name"] = row["name"]
         feat["cat"] = row["category"]
@@ -108,6 +112,7 @@ def main() -> None:
         "base_date": base.isoformat(),
         "us_base_date": us_base.isoformat(),
         "market_counts": market_counts,
+        "financial_counts": {k: sum(s.get(k) is not None for s in stocks) for k in ("dividend_yield", "entitlement_date")},
         "generated_at": dt.datetime.now(market_calendar.JST).isoformat(timespec="seconds"),
         "counts": counts,
         "total": len(stocks),
