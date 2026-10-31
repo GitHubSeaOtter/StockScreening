@@ -397,7 +397,7 @@ function renderResults() {
   const rows = [...RESULTS].sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
     if (['close','r3','r1','rw'].includes(sortKey)) { x = effectiveStock(a)[sortKey]; y = effectiveStock(b)[sortKey]; }
-    if (sortKey === 'entitlement_date') {x=a.entitlement_date||'9999';y=b.entitlement_date||'9999';return sortDesc?y.localeCompare(x):x.localeCompare(y);}
+    if (sortKey === 'entitlement_date') {x=a.entitlement_date;y=b.entitlement_date;if(!x)return y?1:0;if(!y)return -1;return sortDesc?y.localeCompare(x):x.localeCompare(y);}
     if (sortKey === 'code') { x = a.code; y = b.code; return sortDesc ? y.localeCompare(x) : x.localeCompare(y); }
     x = x ?? -1e9; y = y ?? -1e9;
     return sortDesc ? y - x : x - y;

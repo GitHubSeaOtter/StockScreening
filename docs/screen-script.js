@@ -29,7 +29,11 @@
       if (['!','-','+'].includes(token)) node = {op:'unary',kind:token,value:parse(6,depth+1)};
       else if (token === '(') {node = parse(0,depth+1); if(tokens[pos++] !== ')') throw Error('閉じ括弧が必要です');}
       else if (token && /^\d/.test(token)) node = {op:'literal',value:Number(token)};
-      else if (token && token[0] === '"') node = {op:'literal',value:JSON.parse(token)};
+      else if (token && token[0] === '"') {
+        const value=JSON.parse(token), stamp=Date.parse(value);
+        if(!Number.isFinite(stamp) || new Date(stamp).toISOString().slice(0,10)!==value) throw Error('存在する日付を指定してください');
+        node={op:'literal',value};
+      }
       else if (functions.includes(token) && tokens[pos] === '(') {
         pos++; const arg = parse(0,depth+1);
         if (tokens[pos++] !== ')') throw Error('関数には引数を1つ指定してください');

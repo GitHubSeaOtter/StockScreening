@@ -13,5 +13,5 @@ assert.equal(S.evaluate({},'! (dividend_yield > 3)'),false);
 assert.equal(S.evaluate({},'dividend_yield == 0'),false);
 assert.equal(S.evaluate(f,'close / 0 > 1'),false);
 assert.equal(S.evaluate(f,'sma(200) < 100'),false);
-for(const code of ['globalThis.alert(1)','fetch(1)','close = 0','constructor(1)','sma(3);close>0']) assert.throws(()=>S.compile(code));
+for(const code of ['globalThis.alert(1)','fetch(1)','close = 0','constructor(1)', 'rights_date > "2026-02-31"','sma(3);close>0']) assert.throws(()=>S.compile(code));
 console.log('条件式・配当・日付・欠損値・実行制限 OK');

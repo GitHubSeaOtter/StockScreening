@@ -66,8 +66,8 @@ OpenAI または Anthropic の API キーを保存すると、**この端末の�
 
 ## テスト
 
-条件評価は Python(`app/conditions.py`)と JS(`docs/conditions.js`)で同一ロジックを実装し、
-同じ特徴量に対して結果が一致することを parity テストで担保しています。
+従来の手動条件の評価は Python(`app/conditions.py`)と JS(`docs/conditions.js`)で同一ロジックを実装し、
+同じ特徴量に対して結果が一致することを parity テストで確認しています。条件式はブラウザの専用エンジンで評価し、tests/scripts.mjs と画面テストで検証します。
 
 ```bash
 python tests/gen_fixtures.py   # Python 側で特徴量と期待結果を生成
