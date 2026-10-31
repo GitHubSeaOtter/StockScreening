@@ -50,6 +50,8 @@ jobs:
           restore-keys: ${{ runner.os }}-fundamentals-v1-
 
       - name: スクリーニングデータ + チャートを生成
+        env:
+          PYTHONWARNINGS: ignore::FutureWarning
         run: python build_dataset.py
 
       - uses: actions/configure-pages@v5
