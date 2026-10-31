@@ -42,6 +42,9 @@ jobs:
           node tests/parity.mjs
           node tests/nl_responses.mjs
           node tests/scripts.mjs
+          node tests/chart.mjs
+          node tests/analysis.mjs
+          node tests/stock_ai.mjs
 
       - uses: actions/cache@v4
         with:

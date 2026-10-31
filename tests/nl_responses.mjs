@@ -1,72 +1,36 @@
-// Responses API のリクエストと、文章入力から結果表示までを確認する。
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import vm from 'node:vm';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const ScreenScript = require('../docs/screen-script.js');
-const ScreenConditions = require('../docs/conditions.js');
-const html = fs.readFileSync(new URL('../docs/index.html', import.meta.url), 'utf8');
-const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
-const elements = new Map();
-let scrolled = false;
-function el(id) {
-  if (!elements.has(id)) elements.set(id, {
-    value: '', checked: false, hidden: true, textContent: '', innerHTML: '',
-    className: '', disabled: false, insertAdjacentHTML() {},
-    scrollIntoView() { scrolled = true; },
-  });
-  return elements.get(id);
-}
-el('nlText').value = '東証で株価が100円から150円';
-el('apiProvider').value = 'openai';
-el('catStock').checked = true;
-el('marketJpx').checked = true;
-let apiCall;
-const stock = {code:'1301',name:'テスト株',cat:'stock',markets:['jpx'],currency:'JPY',close:120,
-  dividend_yield:4,daily:[90,100,110,120],mc:Array(13).fill(120),wc:[120,110,100,90,80,...Array(8).fill(null)],
-  lm:Array(13).fill(100),r3:0,r1:0,rw:0,v:{'5':100,'20':100,'60':100}};
-const flat = {...stock,dividend_yield:null,code:'1302',name:'横ばい株',wc:Array(13).fill(120)};
-const context = vm.createContext({
-  document:{getElementById:el}, ScreenConditions, ScreenScript,
-  localStorage:{getItem(key) {return key === 'openai_api_key' ? 'test-key' : null;},setItem() {}},
-  fetch:async (url, options) => {
-    if (url.includes('screening.json')) return {ok:true,json:async()=>({base_date:'2026-10-02',stocks:[stock,flat],total:2,counts:{stock:2}})};
-    apiCall = {url,options};
-    const input = JSON.parse(options.body).input;
-    const parsed = input.includes('配当') ?
-      {markets:['jpx'],price_mode:'close',unhandled:[],conditions:[{type:'script',expression:'dividend_yield >= 3 && close > sma(2)'}]} :
-      input.includes('RSI') ?
-      {markets:['jpx'],price_mode:'close',unhandled:['RSI'],conditions:[{type:'price_range',min:100,max:150}]} :
-      input.includes('毎週') ?
-      {markets:['jpx'],price_mode:'close',unhandled:[],conditions:[{type:'consecutive_period_return',unit:'week',periods:4,op:'>',pct:0}]} :
-      {markets:['jpx'],price_mode:'close',unhandled:[],conditions:[{type:'price_range',min:100,max:150}]};
-    return {ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(parsed)}]}]})};
-  },
+import {createUI,response} from './ui-harness.mjs';
+const ui=await createUI(({body})=>{
+  const input=body.input;
+  const parsed=input.includes('旧形式')?{conditions:[{type:'price_range',min:100,max:150}]}:
+    input.includes('未対応')?{expression:'close > 0',markets:['jpx'],price_mode:'close',unhandled:['未対応指標']}:
+    {expression:input.includes('毎週')?'weekly_up(4)':input.includes('配当')?'dividend_yield >= 3 && close > sma(2)':'close >= 100 && close <= 150',
+      markets:['jpx'],price_mode:'close',unhandled:[]};
+  return response(JSON.stringify(parsed));
 });
-vm.runInContext(script, context);
-await new Promise(resolve => setImmediate(resolve));
-await vm.runInContext('parseNL()', context);
-assert.equal(apiCall.url, 'https://api.openai.com/v1/responses');
-const body = JSON.parse(apiCall.options.body);
-assert.equal(body.input, '東証で株価が100円から150円');
-assert.equal(body.text.format.type, 'json_schema');
-assert.equal(el('resultCount').textContent, '2 銘柄');
-assert.equal(el('nlMsg').className, 'ok');
-assert.equal(scrolled, true);
-el('nlText').value = '直近1ヶ月、毎週上昇している銘柄';
-await vm.runInContext('parseNL()', context);
-assert.equal(el('resultCount').textContent, '1 銘柄');
-assert.equal(el('nlMsg').className, 'ok');
-assert.equal(JSON.parse(apiCall.options.body).text.format.schema.properties.conditions.items.properties.type.enum.includes('consecutive_period_return'), true);
-el('nlText').value = '株価100～150円、RSIは30以下';
-await vm.runInContext('parseNL()', context);
-assert.equal(el('nlMsg').className, 'err');
-assert.match(el('nlMsg').textContent, /RSI/);
-assert.equal(el('resultCount').textContent, '1 銘柄');
-el('nlText').value = '配当3%以上で2日移動平均より上';
-await vm.runInContext('parseNL()', context);
-assert.equal(el('nlMsg').className, 'ok');
-assert.equal(el('resultCount').textContent, '1 銘柄');
-console.log('Responses API から結果表示まで OK');
+assert.equal(ui.html.includes("addCond('"),false);
+assert.equal(ui.html.includes('id="conditionExpr"'),true);
+ui.el('nlText').value='東証で株価が100円から150円';
+await ui.run('parseNL()');
+assert.equal(ui.calls[0].url,'https://api.openai.com/v1/responses');
+assert.equal(ui.el('conditionExpr').value,'close >= 100 && close <= 150');
+assert.equal(ui.el('resultCount').textContent,'2 銘柄');
+const schema=ui.calls[0].body.text.format.schema;
+assert.deepEqual(Object.keys(schema.properties).sort(),['expression','markets','price_mode','unhandled'].sort());
+assert.equal(schema.additionalProperties,false);
+assert.match(ui.calls[0].body.instructions,/必ず expression/);
+ui.el('nlText').value='直近1ヶ月、毎週上昇';
+await ui.run('parseNL()');
+assert.equal(ui.el('conditionExpr').value,'weekly_up(4)');
+assert.equal(ui.el('resultCount').textContent,'1 銘柄');
+for(const text of ['旧形式','未対応指標']){
+  ui.el('nlText').value=text;await ui.run('parseNL()');
+  assert.equal(ui.el('nlMsg').className,'err');
+  assert.equal(ui.el('conditionExpr').value,'weekly_up(4)');
+}
+ui.el('nlText').value='配当3%以上で2日平均より上';
+await ui.run('parseNL()');
+assert.equal(ui.el('nlMsg').className,'ok');
+assert.equal(ui.el('resultCount').textContent,'1 銘柄');
+ui.el('conditionExpr').value='fetch(1)';assert.equal(ui.run('runScreen()'),false);
+console.log('条件式のみの画面・自然言語変換・旧形式の拒否 OK');
