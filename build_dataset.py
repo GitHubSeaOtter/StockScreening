@@ -84,6 +84,11 @@ def main() -> None:
         if "jpx" not in row["markets"] and stock_base not in df.index:
             continue
         feat.update(financial.get(ticker, {}))
+        jpx_industry = row.get("jpx_industry")
+        if isinstance(jpx_industry, str) and jpx_industry not in ("", "-", "nan"):
+            feat["jpx_industry"] = jpx_industry
+            if not feat.get("industry"):
+                feat["industry"] = jpx_industry
         feat["code"] = row["code"]
         feat["name"] = row["name"]
         feat["cat"] = row["category"]
@@ -108,10 +113,16 @@ def main() -> None:
         if expected and market_counts[market] < expected * 0.7:
             raise RuntimeError(f"{market} の株価取得率が低すぎます: {market_counts[market]}/{expected}")
 
+    classification_counts = {"sector": sum(bool(s.get("sector")) for s in stocks), "industry": sum(bool(s.get("industry")) for s in stocks), "semiconductor": sum(s.get("semiconductor_related") is True for s in stocks)}
+    if not classification_counts["sector"] or not classification_counts["semiconductor"]:
+        raise RuntimeError("セクター・半導体関連の分類情報を取得できません。公開を停止します")
+    logger.info("分類取得: %s", classification_counts)
+
     payload = {
         "base_date": base.isoformat(),
         "us_base_date": us_base.isoformat(),
         "market_counts": market_counts,
+        "classification_counts": classification_counts,
         "financial_counts": {k: sum(s.get(k) is not None for s in stocks) for k in ("dividend_yield", "entitlement_date")},
         "generated_at": dt.datetime.now(market_calendar.JST).isoformat(timespec="seconds"),
         "counts": counts,

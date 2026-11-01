@@ -73,7 +73,9 @@ def fetch_ticker_list(force: bool = False) -> pd.DataFrame:
     if not force and cache.exists():
         age = dt.datetime.now().timestamp() - cache.stat().st_mtime
         if age < 24 * 3600:
-            return pd.read_parquet(cache)
+            saved = pd.read_parquet(cache)
+            if "jpx_industry" in saved.columns:
+                return saved
 
     logger.info("JPX 銘柄リストをダウンロード中...")
     resp = requests.get(JPX_LIST_URL, timeout=60, headers={"User-Agent": USER_AGENT})
@@ -85,6 +87,7 @@ def fetch_ticker_list(force: bool = False) -> pd.DataFrame:
             "code": raw["コード"].astype(str).str.strip(),
             "name": raw["銘柄名"].astype(str).str.strip(),
             "segment": raw["市場・商品区分"].astype(str).str.strip(),
+            "jpx_industry": raw["33業種区分"].astype(str).str.strip(),
         }
     )
     df["category"] = [

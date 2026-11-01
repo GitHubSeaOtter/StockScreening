@@ -15,3 +15,12 @@ assert.equal(S.evaluate(f,'close / 0 > 1'),false);
 assert.equal(S.evaluate(f,'sma(200) < 100'),false);
 for(const code of ['globalThis.alert(1)','fetch(1)','close = 0','constructor(1)', 'rights_date > "2026-02-31"','sma(3);close>0']) assert.throws(()=>S.compile(code));
 console.log('条件式・配当・日付・欠損値・実行制限 OK');
+
+assert.equal(S.evaluate({sector:'Technology'},'sector == "Technology"'),true);
+assert.equal(S.evaluate({industry:'Semiconductor Equipment & Materials'},'industry == "Semiconductor Equipment & Materials"'),true);
+assert.equal(S.evaluate({jpx_industry:'電気機器'},'jpx_industry == "電気機器"'),true);
+assert.equal(S.evaluate({semiconductor_related:true},'semiconductor == 1'),true);
+assert.equal(S.evaluate({semiconductor_related:false},'semiconductor == 0'),true);
+assert.equal(S.evaluate({},'semiconductor == 0'),false);
+assert.equal(S.evaluate({},'sector != "Technology"'),false);
+assert.equal(S.evaluate({sector:'A "quote"'},'sector == '+JSON.stringify('A "quote"')),true);

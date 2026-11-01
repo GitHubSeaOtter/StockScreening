@@ -116,7 +116,13 @@
   .chart-cross { pointer-events:none; }
   .chart-cross line { stroke:var(--sub); stroke-width:1; stroke-dasharray:4 3; }
   .chart-cross circle { fill:var(--accent); stroke:var(--card); stroke-width:1; }
-  .chart-readout { min-height:3em; font-size:.8rem; margin-top:6px; line-height:1.6; }
+  .chart-readout { background:var(--accent-soft); border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:10px; font-variant-numeric:tabular-nums; }
+  .chart-readout-date { color:var(--sub); font-size:.8rem; min-height:1.3em; }
+  .chart-readout-price { font-size:1.45rem; font-weight:700; margin:5px 0 10px; min-height:1.2em; }
+  .chart-readout-stats { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .chart-readout-stats span { display:block; color:var(--sub); font-size:.75rem; margin-bottom:3px; }
+  .chart-readout-stats strong { font-size:1rem; }
+  #nlSection[hidden] { display:none; }
   .analysis-message { white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; border:1px solid var(--border); border-radius:10px; margin:10px 0; font-size:.9rem; line-height:1.7; }
   .analysis-message.user { background:var(--accent-soft); }
   #analysisPanel { margin-top:12px; }
@@ -142,6 +148,12 @@
   <h2>条件の候補</h2>
   <p class="hint">目的に合わせて選ぶ出発点です。将来の収益を保証するものではありません。選択すると現在の条件を置き換えて実行します。</p>
   <div id="presets"></div>
+  <details><summary>セクター・業種から条件式を作る</summary>
+    <div class="row"><select id="sectorChoice" aria-label="セクター"></select><button class="small" onclick="appendClassification('sector','sectorChoice')">セクターを条件式に追加</button></div>
+    <div class="row"><select id="industryChoice" aria-label="業種"></select><button class="small" onclick="appendClassification('industry','industryChoice')">業種を条件式に追加</button></div>
+    <p class="err" id="sectorMsg"></p>
+  </details>
+  <p class="hint">半導体関連は、業種・企業名・事業説明に半導体の記載がある銘柄を対象とします。製造装置や材料も含み、専業・網羅性を保証する分類ではありません。</p>
   <p class="hint">配当は年間配当額÷取得時株価。予想値を優先し、なければ過去実績を使います。権利付き最終日は取得した権利落ち日の直前の取引日です。配当の権利日を対象とし、株主優待は含みません。日付が過去のままの場合や未取得の場合があります。</p>
 </div>
 <div class="card">
@@ -150,13 +162,13 @@
   <details><summary>使える指標と書き方</summary><p class="hint" id="expressionHelp"></p></details>
   <div class="row"><label class="chk"><input type="checkbox" id="useAfter"> 米国株は直近の時間外価格で比較</label></div>
   <div class="hint">当日の時間外価格がない銘柄は終値で判定します。騰落率の表示も選択した価格に合わせます。価格条件の単位は東証が円、米国が米ドルです。</div>
-  <details style="margin-top:10px">
-    <summary>🤖 自然言語で条件を指定(要 API キー)</summary>
+  <section id="nlSection" hidden style="margin-top:14px">
+    <h2>🤖 自然言語で条件を指定</h2>
     <textarea id="nlText" placeholder="例: 直近1ヶ月、毎週上昇している銘柄"></textarea>
     <div class="row"><button class="small" onclick="parseNL()" id="nlBtn">文章からスクリーニング</button></div>
     <div id="nlMsg"></div>
     <p class="hint">例: 配当利回り3%以上で権利付き最終日まで30日以内、または20日移動平均より上でRSIが50未満</p>
-  </details>
+  </section>
 </div>
 
 <div class="card">
@@ -207,6 +219,7 @@
     </div>
     <div class="stat-grid" id="dStats"></div>
     <div class="period-btns" id="dPeriods"></div>
+    <label class="chk"><input type="checkbox" id="chartZero" onchange="renderChart()">縦軸を0から表示</label>
     <div id="dChart"><div class="detail-msg">読み込み中...</div></div>
     <div class="row"><button id="analyzeBtn" onclick="startAnalysis()" disabled>分析</button></div>
     <p class="hint" id="analysisHint"></p>
@@ -233,6 +246,7 @@ let RESULTS = [];
 let sortKey = 'r3', sortDesc = true;
 
 const PRESETS = [
+ ['半導体関連','半導体メーカー・製造装置・材料などの関連銘柄。','semiconductor == 1'],
  ['配当＋流動性','利回り3〜6%・平均出来高10万株以上。極端な高利回りを避ける出発点。','dividend_yield >= 3 && dividend_yield <= 6 && avg_volume(20) >= 100000'],
  ['権利日が近い配当株','利回り3%以上・権利付き最終日まで0〜30暦日。権利落ちによる値下がりにも注意。','dividend_yield >= 3 && rights_days >= 0 && rights_days <= 30'],
  ['上昇トレンド','20日平均＞60日平均・株価＞20日平均・63営業日の騰落率10%以上。','close > sma(20) && sma(20) > sma(60) && change(63) >= 10'],
@@ -242,6 +256,33 @@ const PRESETS = [
  ['出来高急増','当日出来高が20日平均の2倍以上・前日比プラス。','volume_ratio >= 2 && change(1) > 0'],
  ['値動きが比較的小さい','20営業日ボラティリティ年率25%以下・60日平均より上。','volatility(20) <= 25 && close > sma(60)'],
 ];
+const SECTOR_LABELS={'Technology':'テクノロジー','Basic Materials':'素材','Communication Services':'通信サービス','Consumer Cyclical':'一般消費財','Consumer Defensive':'生活必需品','Energy':'エネルギー','Financial Services':'金融','Healthcare':'ヘルスケア','Industrials':'資本財・産業','Real Estate':'不動産','Utilities':'公益'};
+function sectorLabel(value){return SECTOR_LABELS[value]||value||'-';}
+function classificationValues(field){return [...new Set((DATA?.stocks||[]).map(s=>s[field]).filter(v=>typeof v==='string'&&v))].sort((a,b)=>a.localeCompare(b));}
+function renderClassificationOptions(){
+  for(const [field,id] of [['sector','sectorChoice'],['industry','industryChoice']]){
+    const select=document.getElementById(id);select.replaceChildren();
+    const values=classificationValues(field),placeholder=document.createElement('option');
+    placeholder.value='';placeholder.textContent=values.length?'分類を選択':'分類情報がありません';select.appendChild(placeholder);
+    for(const value of values){
+      const option=document.createElement('option');option.value=value;
+      option.textContent=field==='sector'?sectorLabel(value)+' / '+value:value;select.appendChild(option);
+    }
+    select.value='';
+  }
+}
+function appendClassification(field,id){
+  const value=document.getElementById(id).value,msg=document.getElementById('sectorMsg');msg.textContent='';
+  if(!['sector','industry'].includes(field)||!value){msg.textContent='分類を選択してください';return;}
+  const clause=field+' == '+JSON.stringify(value),existing=document.getElementById('conditionExpr').value.trim();
+  const expression=existing?'('+existing+') && ('+clause+')':clause;
+  try{ScreenScript.compile(expression);setExpression(expression);}catch(e){msg.textContent=e.message;}
+}
+function classificationHints(){
+  return '\nセクターの日本語対応: '+JSON.stringify(SECTOR_LABELS)+
+    '\n取得済みセクター: '+JSON.stringify(classificationValues('sector'))+
+    '\n取得済み業種: '+JSON.stringify(classificationValues('industry'));
+}
 function usePreset(i) { setExpression(PRESETS[i][2]); runScreen(); }
 function setExpression(expression) { document.getElementById('conditionExpr').value=expression; }
 
@@ -366,6 +407,9 @@ function openDetail(code) {
   document.getElementById('dTitle').textContent = curStock.name;
   document.getElementById('dCode').textContent = `${curStock.code}・${(curStock.markets||[]).filter(m=>m!=='jpx').map(m=>m==='dow'?'NYダウ':'NASDAQ-100').join('/') || CATS[curStock.cat] || curStock.cat} (タップでコピー)`;
   document.getElementById('dStats').innerHTML = [
+    ['セクター', escapeHTML(sectorLabel(curStock.sector))],
+    ['業種', escapeHTML(curStock.industry || '-')],
+    ['半導体関連', curStock.semiconductor_related==null?'-':curStock.semiconductor_related?'該当 ('+({industry:'業種',business_summary:'事業説明',company_name:'企業名'}[curStock.classification_source]||'分類情報')+')':'該当せず'],
     ['配当利回り', curStock.dividend_yield != null ? curStock.dividend_yield.toFixed(2)+'% ('+(curStock.dividend_basis==='trailing'?'実績':'予想')+')' : '-'],
     ['権利付き最終日', escapeHTML(curStock.entitlement_date || '-')],
     ['権利落ち日', escapeHTML(curStock.ex_dividend_date || '-')],
@@ -418,46 +462,34 @@ function renderChart() {
   const vol = curChart.vol.slice(start);
   const dates = curChart.d.slice(start);
   const container=document.getElementById('dChart');
-  container.innerHTML = buildChartHTML(dates, close, vol);
-  ChartInteraction.bind(container,{dates,close,previousClose:start>0?curChart.close[start-1]:null,currency:curStock?.currency});
+  const zeroBased=document.getElementById('chartZero').checked;
+  container.innerHTML = buildChartHTML(dates, close, vol,zeroBased);
+  ChartInteraction.bind(container,{dates,close,previousClose:start>0?curChart.close[start-1]:null,currency:curStock?.currency,zeroBased});
 }
 
-function buildChartHTML(dates, close, vol) {
-  if (close.length < 2) return '<div class="detail-msg">データが不足しています</div>';
-  const W = 320, H = 200, padT = 6, padB = 34, padX = 2;
-  const n = close.length;
-  const lo = Math.min(...close), hi = Math.max(...close), span = (hi - lo) || 1;
-  const x = i => padX + (W - 2 * padX) * (n <= 1 ? 0 : i / (n - 1));
-  const y = v => padT + (H - padT - padB) * (1 - (v - lo) / span);
-  const linePts = close.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  const areaPts = `${x(0).toFixed(1)},${(H - padB).toFixed(1)} ${linePts} ${x(n - 1).toFixed(1)},${(H - padB).toFixed(1)}`;
-  const vmax = Math.max(...vol, 1), bandH = padB - 8, bandTop = H - padB + 6;
-  const bw = Math.max(0.6, (W - 2 * padX) / n * 0.7);
-  const bars = vol.map((v, i) =>
-    `<rect class="vol" x="${(x(i) - bw / 2).toFixed(1)}" y="${(bandTop + bandH * (1 - v / vmax)).toFixed(1)}" width="${bw.toFixed(1)}" height="${(bandH * v / vmax).toFixed(1)}"/>`
-  ).join('');
-  const up = close[n - 1] >= close[0];
-  const svg = `<svg class="chart ${up ? 'up' : 'down'}" tabindex="0" role="img" aria-label="株価チャート。タッチまたは左右キーで日付と価格を確認" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <line class="grid" x1="0" y1="${padT.toFixed(1)}" x2="${W}" y2="${padT.toFixed(1)}"/>
-    <line class="grid" x1="0" y1="${(H - padB).toFixed(1)}" x2="${W}" y2="${(H - padB).toFixed(1)}"/>
-    ${bars}
-    <polygon class="area" points="${areaPts}"/>
-    <polyline class="line" points="${linePts}" vector-effect="non-scaling-stroke"/>
-    <g class="chart-cross" style="display:none">
-      <line class="cross-x" y1="6" y2="166"/><line class="cross-y" x1="2" x2="318"/>
-      <circle r="3"/>
-    </g>
-  </svg>`;
-  const chg = ((close[n - 1] / close[0] - 1) * 100);
-  return `<div class="chart-box">
-      <span class="yhi">${hi.toLocaleString()}</span>
-      <span class="ylo">${lo.toLocaleString()}</span>
-      ${svg}
-    </div>
-    <div class="chart-readout" role="status" aria-live="polite">チャートにタッチすると日付・価格・前日比・表示開始比を表示します</div>
-    <div class="xlabels"><span>${dates[0]}</span>
-      <span class="${chg >= 0 ? 'pos' : 'neg'}">${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%</span>
-      <span>${dates[n - 1]}</span></div>`;
+function buildChartHTML(dates, close, vol, zeroBased=false) {
+  if(close.length<2)return '<div class="detail-msg">データが不足しています</div>';
+  const g=ChartInteraction.layout(close,zeroBased),n=close.length;
+  const x=g.x,y=g.y,W=g.width,H=g.height;
+  const linePts=close.map((v,i)=>x(i).toFixed(1)+','+y(v).toFixed(1)).join(' ');
+  const areaPts=x(0)+','+g.bottom+' '+linePts+' '+x(n-1)+','+g.bottom;
+  const vmax=Math.max(...vol,1),bandTop=174,bandH=18,bw=Math.max(0.6,(g.right-g.left)/n*0.7);
+  const bars=vol.map((v,i)=>'<rect class="vol" x="'+(x(i)-bw/2).toFixed(1)+'" y="'+(bandTop+bandH*(1-v/vmax)).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(bandH*v/vmax).toFixed(1)+'"/>').join('');
+  const up=close[n-1]>=close[0];
+  const svg='<svg class="chart '+(up?'up':'down')+'" tabindex="0" role="img" aria-label="株価チャート。タッチまたは左右キーで日付と価格を確認" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+    '<line class="grid" x1="'+g.left+'" y1="'+g.top+'" x2="'+g.right+'" y2="'+g.top+'"/>'+
+    '<line class="grid" x1="'+g.left+'" y1="'+g.bottom+'" x2="'+g.right+'" y2="'+g.bottom+'"/>'+
+    bars+'<polygon class="area" points="'+areaPts+'"/><polyline class="line" points="'+linePts+'" vector-effect="non-scaling-stroke"/>'+
+    '<g class="chart-cross" style="display:none"><line class="cross-x" y1="'+g.top+'" y2="'+g.bottom+'"/><line class="cross-y" x1="'+g.left+'" x2="'+g.right+'"/><circle r="4"/></g></svg>';
+  const chg=close[0]>0?(close[n-1]/close[0]-1)*100:null;
+  const format=v=>v.toLocaleString('ja-JP',{maximumFractionDigits:2});
+  return '<div class="chart-box"><span class="yhi">'+format(g.high)+'</span><span class="ylo">'+format(g.low)+'</span>'+svg+'</div>'+
+    '<div class="chart-readout" role="status" aria-live="polite">'+
+      '<div class="chart-readout-date" data-point-date>チャートをタッチ／ドラッグして確認</div>'+
+      '<div class="chart-readout-price" data-point-price>—</div>'+
+      '<div class="chart-readout-stats"><div><span>前日比</span><strong data-point-day>—</strong></div>'+
+      '<div><span>表示開始日比</span><strong data-point-period>—</strong></div></div></div>'+
+    '<div class="xlabels"><span>'+escapeHTML(dates[0])+'</span><span>'+ (chg==null?'-':(chg>=0?'+':'')+chg.toFixed(1)+'%')+'</span><span>'+escapeHTML(dates[n-1])+'</span></div>';
 }
 
 // ---- 銘柄分析と追加質問（銘柄・APIプロバイダーごとに、このページ内だけで保持） ----
@@ -475,6 +507,7 @@ function analysisContext(stock){
     technical[name+'_'+n]=ScreenScript.indicator(effective,name,n);
   return {
     code:stock.code,name:stock.name,markets:stock.markets,currency:stock.currency,
+    sector:stock.sector,industry:stock.industry,semiconductor_related:stock.semiconductor_related,classification_source:stock.classification_source,
     price_date:stock.markets?.includes('jpx')?DATA?.base_date:DATA?.us_base_date,
     generated_at:DATA?.generated_at,regular_close:stock.close,after:stock.after,after_at:stock.after_at,
     comparison_mode:document.getElementById('useAfter').checked?'after_if_available':'regular_close',
@@ -577,11 +610,13 @@ ${ScreenScript.help}
 複数の条件は括弧と && / || で結合する。演算子の優先順位に注意し、ORの各まとまりを括弧にする。
 市場は明示されたものを markets に入れ、省略時は空配列。時間外価格の指定がある場合 price_mode=after、それ以外close。
 市場のみ・全銘柄という指定でも expression="close > 0" を返す。配当利回りの単位は%であり3%=3。株価は東証が円、米国が米ドル。
+セクターや業種も必ず条件式に含める。「半導体関連」は semiconductor == 1（装置・材料も含む）、「半導体関連を除く」は semiconductor == 0。sector と industry は取得済みの文字列値を二重引用符で囲んで比較する。例 sector == "Technology"。日本語セクター名は対応表を参照する。
 対応する指標がなく表現できない部分は unhandled に抜粋を入れ、指標を捏造しない。すべて表現できた場合は空配列。`;
 
 function setProvider(provider) {
   localStorage.setItem('api_provider', provider);
   document.getElementById('keyStatus').textContent = localStorage.getItem(provider + '_api_key') ? `${provider} のキーを保存済み` : `${provider} のキーは未設定`;
+  document.getElementById('nlSection').hidden=!localStorage.getItem(provider+'_api_key');
   renderAnalysis();
 }
 
@@ -593,7 +628,7 @@ async function parseNL() {
   if(!key){msg.className='err';msg.textContent='先に設定から API キーを保存してください';return;}
   msg.className='';msg.textContent='条件式を生成中...';btn.disabled=true;
   try{
-    const raw=await StockAI.request({provider,key,instructions:NL_SYSTEM,input:text,schema:NL_SCHEMA});
+    const raw=await StockAI.request({provider,key,instructions:NL_SYSTEM+classificationHints(),input:text,schema:NL_SCHEMA});
     const parsed=JSON.parse(raw);
     if(!Array.isArray(parsed.unhandled) || !Array.isArray(parsed.markets) ||
        !['close','after'].includes(parsed.price_mode) || parsed.markets.some(m=>!['jpx','dow','nasdaq100'].includes(m)))
@@ -635,9 +670,11 @@ function saveKey() {
     const res = await fetch('./data/screening.json', { cache: 'no-store' });
     if (!res.ok) throw new Error(res.status);
     DATA = await res.json();
+    renderClassificationOptions();
     const c = DATA.counts || {};
     const parts = Object.keys(CATS).filter(k => c[k]).map(k => `${CATS[k]} ${c[k]}`);
     metaEl.innerHTML = `基準日: 東証 <b>${escapeHTML(DATA.base_date)}</b> / 米国 <b>${escapeHTML(DATA.us_base_date || '-')}</b><br>${DATA.total} 銘柄 (${parts.join(' ・ ')})・NYダウ ${DATA.market_counts?.dow || 0}・NASDAQ-100 ${DATA.market_counts?.nasdaq100 || 0}<br>更新: ${escapeHTML(DATA.generated_at || '-')}`;
+    metaEl.innerHTML += `<br>分類取得: セクター ${DATA.classification_counts?.sector||0} / 業種 ${DATA.classification_counts?.industry||0} / 半導体関連 ${DATA.classification_counts?.semiconductor||0} 銘柄`;
     metaEl.innerHTML += `<br>配当利回り取得: ${DATA.financial_counts?.dividend_yield || 0} / 権利日取得: ${DATA.financial_counts?.entitlement_date || 0} 銘柄`;
   } catch (e) {
     metaEl.className = 'err';

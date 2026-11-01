@@ -3,15 +3,15 @@
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.ScreenScript = factory();
 })(typeof self !== 'undefined' ? self : this, function() {
-  const fields = ['close','r1','r3','rw','dividend_yield','rights_days','rights_date','pe','pbr','volume','volume_ratio'];
+  const fields = ['close','r1','r3','rw','dividend_yield','rights_days','rights_date','pe','pbr','volume','volume_ratio','sector','industry','jpx_industry','semiconductor'];
   const functions = ['sma','high','low','change','rsi','avg_volume','volatility','weekly_up','weekly_down'];
-  const help = '式: &&, ||, !, >, >=, <, <=, ==, !=, +, -, *, /, 括弧。変数 close,r1,r3,rw,dividend_yield(%),rights_days(権利付き最終日までの暦日),rights_date(YYYY-MM-DD),pe,pbr,volume,volume_ratio。当日から過去へ最大260営業日の調整済終値を使用。関数 sma(n),high(n),low(n) は終値の平均/最大/最小、change(n) はn営業日前からの騰落率%、avg_volume(n) は平均出来高、rsi(n) は単純平均方式RSI、volatility(n) は年率ボラティリティ%、weekly_up(n)/weekly_down(n) はn週連続上昇/下落。n=1..252、weeklyは1..12。日付は "YYYY-MM-DD" で比較。未取得の値を必要とする比較は不成立。';
+  const help = '式: &&, ||, !, >, >=, <, <=, ==, !=, +, -, *, /, 括弧。変数 close,r1,r3,rw,dividend_yield(%),rights_days(権利付き最終日までの暦日),rights_date(YYYY-MM-DD),pe,pbr,volume,volume_ratio。当日から過去へ最大260営業日の調整済終値を使用。関数 sma(n),high(n),low(n) は終値の平均/最大/最小、change(n) はn営業日前からの騰落率%、avg_volume(n) は平均出来高、rsi(n) は単純平均方式RSI、volatility(n) は年率ボラティリティ%、weekly_up(n)/weekly_down(n) はn週連続上昇/下落。n=1..252、weeklyは1..12。sector(セクター),industry(業種),jpx_industry(東証33業種)は文字列で比較。例: sector == "Technology"。semiconductor は半導体関連なら1、対象外なら0、情報不足なら欠損。文字列は二重引用符で囲む。日付は "YYYY-MM-DD" で比較。未取得の値を必要とする比較は不成立。';
   const cache = new Map();
   function compile(source) {
     if (typeof source !== 'string' || source.length > 2000) throw Error('式は2000文字以内で指定してください');
     if (cache.has(source)) return cache.get(source);
     const tokens = [];
-    const re = /\s*(\d+(?:\.\d+)?|"\d{4}-\d{2}-\d{2}"|[a-z_][a-z_0-9]*|&&|\|\||>=|<=|==|!=|[()+*\/!,<>-])/gy;
+    const re = /\s*(\d+(?:\.\d+)?|"(?:[^"\\\r\n]|\\.)*"|[a-z_][a-z_0-9]*|&&|\|\||>=|<=|==|!=|[()+*\/!,<>-])/gy;
     let offset = 0;
     while (offset < source.trimEnd().length) {
       re.lastIndex = offset;
@@ -30,8 +30,12 @@
       else if (token === '(') {node = parse(0,depth+1); if(tokens[pos++] !== ')') throw Error('閉じ括弧が必要です');}
       else if (token && /^\d/.test(token)) node = {op:'literal',value:Number(token)};
       else if (token && token[0] === '"') {
-        const value=JSON.parse(token), stamp=Date.parse(value);
-        if(!Number.isFinite(stamp) || new Date(stamp).toISOString().slice(0,10)!==value) throw Error('存在する日付を指定してください');
+        const value=JSON.parse(token);
+        if(value.length>120) throw Error('文字列は120文字以内で指定してください');
+        if(/^\d{4}-\d{2}-\d{2}$/.test(value)){
+          const stamp=Date.parse(value);
+          if(!Number.isFinite(stamp) || new Date(stamp).toISOString().slice(0,10)!==value) throw Error('存在する日付を指定してください');
+        }
         node={op:'literal',value};
       }
       else if (functions.includes(token) && tokens[pos] === '(') {
@@ -85,6 +89,8 @@
   function run(ast, f) {
     if(ast.op === 'literal') return ast.value;
     if(ast.op === 'field') {
+      if(['sector','industry','jpx_industry'].includes(ast.name)) return typeof f[ast.name]==='string' && f[ast.name] ? f[ast.name] : null;
+      if(ast.name==='semiconductor') return f.semiconductor_related==null?null:(f.semiconductor_related?1:0);
       if(ast.name === 'rights_date') return f.entitlement_date || null;
       if(ast.name === 'rights_days') {
         if(!f.entitlement_date) return null;

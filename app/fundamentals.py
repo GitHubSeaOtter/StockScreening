@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import logging
 import math
+import re
 from pathlib import Path
 
 import exchange_calendars as xcals
@@ -22,6 +23,23 @@ def number(value):
     return float(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
 
 
+def classify_business(info):
+    sector = str(info.get("sector") or "").strip() or None
+    industry = str(info.get("industry") or "").strip() or None
+    summary = str(info.get("longBusinessSummary") or info.get("description") or "")
+    name = " ".join(str(info.get(k) or "") for k in ("longName", "shortName"))
+    keyword = re.compile(r"semiconductor|semi-conductor|半導体", re.IGNORECASE)
+    related, source = None, None
+    for source_name, value in (("industry", industry), ("business_summary", summary), ("company_name", name)):
+        if value and keyword.search(value):
+            related, source = True, source_name
+            break
+    if related is None and (industry or summary):
+        related, source = False, "industry_or_summary"
+    return {"sector": sector, "industry": industry, "semiconductor_related": related,
+            "classification_source": source, "classification_version": 1}
+
+
 def normalize(info, ticker, checked):
     price = number(info.get("regularMarketPrice")) or number(info.get("currentPrice"))
     annual = number(info.get("dividendRate"))
@@ -35,6 +53,7 @@ def normalize(info, ticker, checked):
         "pe": number(info.get("trailingPE")), "pbr": number(info.get("priceToBook")),
         "fundamentals_at": checked.isoformat(), "ex_dividend_date": None, "entitlement_date": None,
     }
+    result.update(classify_business(info))
     stamp = info.get("exDividendDate")
     if isinstance(stamp, (int, float)) and stamp > 0:
         ex = dt.datetime.fromtimestamp(stamp, dt.timezone.utc).date()
@@ -61,7 +80,7 @@ def fetch_fundamentals(tickers):
             return now - dt.datetime.fromisoformat(item["fundamentals_at"]) < dt.timedelta(days=days)
         except (KeyError, ValueError, TypeError):
             return False
-    missing = [t for t in tickers if not fresh(cached.get(t, {}), 1)]
+    missing = [t for t in tickers if not fresh(cached.get(t, {}), 1) or cached.get(t, {}).get("classification_version") != 1]
     logger.info("配当・評価指標を取得: %d 銘柄 (cache=%d)", len(missing), len(tickers)-len(missing))
     failures = 0
     def fetch(t):
