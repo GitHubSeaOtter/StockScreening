@@ -29,3 +29,15 @@ class WeeklyStreakTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class CalendarAndYearTest(unittest.TestCase):
+    def test_months_use_calendar_dates_and_weeks_cover_year(self):
+        base=dt.date(2026,3,31)
+        dates=pd.bdate_range(start=base-dt.timedelta(days=400),end=base).date
+        prices=list(range(100,100+len(dates)))
+        frame=pd.DataFrame({"Close":prices,"Low":prices,"Volume":[100]*len(dates)},index=dates)
+        f=compute_features(frame,base)
+        feb=dt.date(2026,2,27)
+        self.assertEqual(f["mc"][1],float(frame.loc[feb,"Close"]))
+        self.assertEqual(len(f["wc"]),53)
+        self.assertIsNotNone(f["wc"][52])

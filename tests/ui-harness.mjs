@@ -4,6 +4,8 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const ScreenScript=require('../docs/screen-script.js');
 const ChartInteraction=require('../docs/chart-interaction.js');
+const NLValidation=require('../docs/nl-validation.js');
+const NLExamples=require('../docs/nl-examples.js');
 const AI=require('../docs/stock-ai.js');
 export function node(){
   return {value:'',checked:false,hidden:true,textContent:'',innerHTML:'',className:'',disabled:false,style:{},children:[],
@@ -17,9 +19,9 @@ export async function createUI(apiReply,{keys={openai_api_key:'test-key'}}={}){
   el('apiProvider').value='openai';el('catStock').checked=true;el('marketJpx').checked=true;
   const stock={code:'1301',name:'テスト株',cat:'stock',markets:['jpx'],currency:'JPY',close:120,
     sector:'Technology',industry:'Semiconductors',semiconductor_related:true,dividend_yield:4,daily:[90,100,110,120],volumes:[100,200,300,400],
-    mc:Array(13).fill(120),wc:[120,110,100,90,80,...Array(8).fill(null)],
+    mc:Array.from({length:13},(_,k)=>120/(1.05**k)),wc:Array.from({length:53},(_,k)=>120/(1.01**k)),
     lm:Array(13).fill(100),r3:0,r1:0,rw:0,v:{'5':100,'20':100,'60':100}};
-  const flat={...stock,sector:'Financial Services',industry:'Banks - Regional',semiconductor_related:false,dividend_yield:null,code:'1302',name:'横ばい株',wc:Array(13).fill(120)};
+  const flat={...stock,mc:Array(13).fill(120),sector:'Financial Services',industry:'Banks - Regional',semiconductor_related:false,dividend_yield:null,code:'1302',name:'横ばい株',wc:Array(53).fill(120)};
   const fetchMock=async (url,options)=>{
     if(url.includes('screening.json'))return{ok:true,json:async()=>({base_date:'2026-10-30',stocks:[stock,flat],total:2,counts:{stock:2}})};
     if(url.includes('/charts/'))return{ok:true,json:async()=>({d:['2026-10-28','2026-10-29','2026-10-30'],close:[100,110,120],vol:[100,200,300]})};
@@ -27,7 +29,7 @@ export async function createUI(apiReply,{keys={openai_api_key:'test-key'}}={}){
     return apiReply(call);
   };
   const context=vm.createContext({
-    document:{getElementById:el,createElement:node,querySelectorAll:()=>[]},ScreenScript,ChartInteraction,
+    document:{getElementById:el,createElement:node,querySelectorAll:()=>[]},ScreenScript,ChartInteraction,NLValidation,NLExamples,
     StockAI:{request:options=>AI.request({...options,fetchImpl:fetchMock})},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
     fetch:fetchMock,AbortController

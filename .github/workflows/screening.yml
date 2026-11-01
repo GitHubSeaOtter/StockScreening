@@ -41,6 +41,7 @@ jobs:
           python tests/gen_fixtures.py
           node tests/parity.mjs
           node tests/nl_responses.mjs
+          node tests/nl-periods.mjs
           node tests/scripts.mjs
           node tests/chart.mjs
           node tests/analysis.mjs

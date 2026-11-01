@@ -122,6 +122,8 @@
   .chart-readout-stats { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .chart-readout-stats span { display:block; color:var(--sub); font-size:.75rem; margin-bottom:3px; }
   .chart-readout-stats strong { font-size:1rem; }
+  .nl-submit { min-height:56px; padding:16px; margin-top:8px; line-height:1.4; }
+  #nlExamples code { display:block; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.8rem; margin:6px 0; }
   #nlSection[hidden] { display:none; }
   #sectorChoice, #industryChoice { max-width:100%; min-width:0; }
   .chart-readout-stats { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
@@ -147,9 +149,11 @@
 </div>
 
 <div class="card">
-  <h2>条件の候補</h2>
+  <details id="conditionCandidates">
+  <summary>条件の候補</summary>
   <p class="hint">目的に合わせて選ぶ出発点です。将来の収益を保証するものではありません。選択すると現在の条件を置き換えて実行します。</p>
   <div id="presets"></div>
+  <details><summary>文章条件と条件式の例（29件）</summary><div id="nlExamples"></div></details>
   <details><summary>セクター・業種から条件式を作る</summary>
     <div class="row"><select id="sectorChoice" aria-label="セクター"></select><button class="small" onclick="appendClassification('sector','sectorChoice')">セクターを条件式に追加</button></div>
     <div class="row"><select id="industryChoice" aria-label="業種"></select><button class="small" onclick="appendClassification('industry','industryChoice')">業種を条件式に追加</button></div>
@@ -157,18 +161,20 @@
   </details>
   <p class="hint">半導体関連は、業種・企業名・事業説明に半導体の記載がある銘柄を対象とします。製造装置や材料も含み、専業・網羅性を保証する分類ではありません。</p>
   <p class="hint">配当は年間配当額÷取得時株価。予想値を優先し、なければ過去実績を使います。権利付き最終日は取得した権利落ち日の直前の取引日です。配当の権利日を対象とし、株主優待は含みません。日付が過去のままの場合や未取得の場合があります。</p>
+  </details>
 </div>
 <div class="card">
   <h2>条件式</h2>
-  <textarea id="conditionExpr" aria-label="スクリーニング条件式" rows="4" spellcheck="false" placeholder="例: dividend_yield >= 3 && avg_volume(20) >= 100000"></textarea>
+  <textarea id="conditionExpr" oninput="document.getElementById('nlInterpretation').textContent=''" aria-label="スクリーニング条件式" rows="4" spellcheck="false" placeholder="例: dividend_yield >= 3 && avg_volume(20) >= 100000"></textarea>
   <details><summary>使える指標と書き方</summary><p class="hint" id="expressionHelp"></p></details>
   <div class="row"><label class="chk"><input type="checkbox" id="useAfter"> 米国株は直近の時間外価格で比較</label></div>
   <div class="hint">当日の時間外価格がない銘柄は終値で判定します。騰落率の表示も選択した価格に合わせます。価格条件の単位は東証が円、米国が米ドルです。</div>
   <section id="nlSection" hidden style="margin-top:14px">
     <h2>🤖 自然言語で条件を指定</h2>
     <textarea id="nlText" placeholder="例: 直近1ヶ月、毎週上昇している銘柄"></textarea>
-    <div class="row"><button class="small" onclick="parseNL()" id="nlBtn">文章からスクリーニング</button></div>
+    <div class="row"><button class="primary nl-submit" onclick="parseNL()" id="nlBtn">文章からスクリーニング</button></div>
     <div id="nlMsg"></div>
+    <p class="hint" id="nlInterpretation"></p>
     <p class="hint">例: 配当利回り3%以上で権利付き最終日まで30日以内、または20日移動平均より上でRSIが50未満</p>
   </section>
 </div>
@@ -241,6 +247,8 @@
 <script src="screen-script.js"></script>
 <script src="stock-ai.js"></script>
 <script src="chart-interaction.js"></script>
+<script src="nl-validation.js"></script>
+<script src="nl-examples.js"></script>
 <script>
 const CATS = { stock: '株', trust: '信託', etf: 'ETF', commodity: '商品' };
 let DATA = null;
@@ -286,7 +294,8 @@ function classificationHints(){
     '\n取得済み業種: '+JSON.stringify(classificationValues('industry'));
 }
 function usePreset(i) { setExpression(PRESETS[i][2]); runScreen(); }
-function setExpression(expression) { document.getElementById('conditionExpr').value=expression; }
+function setExpression(expression) { document.getElementById('conditionExpr').value=expression; document.getElementById('nlInterpretation').textContent=''; }
+function useNaturalExample(i){const entry=NLExamples[i];setExpression(entry.expression);document.getElementById('nlText').value=entry.text;document.getElementById('nlInterpretation').textContent=entry.interpretation;runScreen();}
 
 function selectedCats() {
   const cats = [];
@@ -599,21 +608,28 @@ const NL_SCHEMA = {
   type:'object',
   properties:{
     expression:{type:'string'},
+    interpretation:{type:'string'},
     markets:{type:'array',items:{type:'string',enum:['jpx','dow','nasdaq100']}},
     price_mode:{type:'string',enum:['close','after']},
     unhandled:{type:'array',items:{type:'string'}}
   },
-  required:['expression','markets','price_mode','unhandled'],additionalProperties:false
+  required:['expression','interpretation','markets','price_mode','unhandled'],additionalProperties:false
 };
-const NL_SYSTEM = `あなたは株式スクリーニングの条件式を生成します。必ず expression に一つの条件式を返してください。条件タイプや条件リストは返さない。
+const NL_SYSTEM = `日本語の株式スクリーニング条件を、必ず単一の expression に変換してください。interpretation に単位・期間数・判定方法を日本語で説明してください。
 ${ScreenScript.help}
-「1ヶ月間毎週上昇」は weekly_up(4)。週は基準日から7日ずつ遡る終値比較。月末や週末に固定されない。change(n),sma(n)などの日数は営業日。
-配当3%以上で権利付き最終日まで30日以内 => dividend_yield >= 3 && rights_days >= 0 && rights_days <= 30。
-複数の条件は括弧と && / || で結合する。演算子の優先順位に注意し、ORの各まとまりを括弧にする。
-市場は明示されたものを markets に入れ、省略時は空配列。時間外価格の指定がある場合 price_mode=after、それ以外close。
-市場のみ・全銘柄という指定でも expression="close > 0" を返す。配当利回りの単位は%であり3%=3。株価は東証が円、米国が米ドル。
-セクターや業種も必ず条件式に含める。「半導体関連」は semiconductor == 1（装置・材料も含む）、「半導体関連を除く」は semiconductor == 0。sector と industry は取得済みの文字列値を二重引用符で囲んで比較する。例 sector == "Technology"。日本語セクター名は対応表を参照する。
-対応する指標がなく表現できない部分は unhandled に抜粋を入れ、指標を捏造しない。すべて表現できた場合は空配列。`;
+「銀行関連」は banking == 1。Yahooの英語業種とJPX日本語業種をANDで狭めない。銀行・銀行持株会社を双方の分類から拾う。金融全般なら sector == "Financial Services"。
+「半年間毎月上昇」は monthly_up(6)。半年を24週に変換しない。月は基準日から暦の1ヶ月ずつ遡る終値比較。
+連続判定 _up/_down は真偽値。上昇期間数の大小は _up_count/_down_count で比較。weekly_up(48) >= 24 のような真偽値と数値の比較は禁止。
+「過去一年上昇期間が多い」は単位省略のため月とし monthly_up_count(12) > 6（12ヶ月中7ヶ月以上）。「週が多い」と明示されれば weekly_up_count(52) > 26。「半分以上」は >=、「半分より多い/過半数」は >。
+日=最大252営業日、週=最大52区間、月=最大12区間。1年は12ヶ月/52週/252営業日、半年は6ヶ月/26週/126営業日。その他の月から週への換算は月数×52/12を四捨五入。曖昧な単位・換算はinterpretationに明記。
+monthly_min_gainは各月騰落率%の最小、monthly_max_gainは最大。毎月3%以上上昇は monthly_min_gain(6) >= 3。5%以上上昇した月の数は monthly_gain_count(12,5)。5%以上下落した月の数は monthly_loss_count(12,-5)。
+期間全体の上昇（「半年の合計」）と、毎月連続上昇と、上昇期間数が多いことを区別する。複数条件は括弧と&&/||で結合する。
+配当利回り3%=3。株価の単位は東証が円、米国が米ドル。半導体関連は semiconductor == 1。
+市場は明示されたものをmarketsに入れ、省略時は空配列。時間外指定がある場合price_mode=after、それ以外close。
+市場のみ・全銘柄指定でも expression="close > 0" を返す。期間が上限を超える、必要な指標がない等の場合は unhandled に理由を入れ、期間を勝手に短縮しない。表現できた場合は空配列。
+以下は動作確認済みの文章と式です。数値や結合条件を文章に合わせて変えられます。
+${JSON.stringify(NLExamples)}
+`;
 
 function setProvider(provider) {
   localStorage.setItem('api_provider', provider);
@@ -622,29 +638,32 @@ function setProvider(provider) {
   renderAnalysis();
 }
 
-async function parseNL() {
-  const msg=document.getElementById('nlMsg'),btn=document.getElementById('nlBtn');
-  const text=document.getElementById('nlText').value.trim();
-  if(!text)return;
+async function parseNL(){
+  const msg=document.getElementById('nlMsg'),btn=document.getElementById('nlBtn'),interpretation=document.getElementById('nlInterpretation');
+  const text=document.getElementById('nlText').value.trim();if(!text)return;
   const provider=document.getElementById('apiProvider').value,key=localStorage.getItem(provider+'_api_key');
   if(!key){msg.className='err';msg.textContent='先に設定から API キーを保存してください';return;}
-  msg.className='';msg.textContent='条件式を生成中...';btn.disabled=true;
+  msg.className='';msg.textContent='条件式を生成中...';interpretation.textContent='';btn.disabled=true;
   try{
-    const raw=await StockAI.request({provider,key,instructions:NL_SYSTEM+classificationHints(),input:text,schema:NL_SCHEMA});
-    const parsed=JSON.parse(raw);
-    if(!Array.isArray(parsed.unhandled) || !Array.isArray(parsed.markets) ||
-       !['close','after'].includes(parsed.price_mode) || parsed.markets.some(m=>!['jpx','dow','nasdaq100'].includes(m)))
-      throw Error('API の応答形式を確認できませんでした');
-    if(parsed.unhandled.length)throw Error('対応できない条件: '+parsed.unhandled.join('、'));
-    if(typeof parsed.expression!=='string' || !parsed.expression.trim())throw Error('API が条件式を返しませんでした');
-    ScreenScript.compile(parsed.expression);
+    let parsed,raw='',repair='';
+    for(let attempt=0;attempt<2;attempt++){
+      raw=await StockAI.request({provider,key,instructions:NL_SYSTEM+classificationHints()+repair,input:text,schema:NL_SCHEMA});
+      try{
+        parsed=JSON.parse(raw);NLValidation.validate(parsed,text);break;
+      }catch(e){
+        if(e.unsupported || attempt===1)throw e;
+        msg.textContent='単位・期間・型を確認して条件式を再生成中...';
+        repair='\n前回の応答: '+raw.slice(0,5000)+'\n検証エラー: '+e.message+'\nこのエラーを修正して同じ文章を正しく式にしてください。';
+      }
+    }
     setExpression(parsed.expression);
-    if(parsed.markets.length) for(const [id,market] of [['marketJpx','jpx'],['marketDow','dow'],['marketNasdaq','nasdaq100']])
+    if(parsed.markets.length)for(const [id,market] of [['marketJpx','jpx'],['marketDow','dow'],['marketNasdaq','nasdaq100']])
       document.getElementById(id).checked=parsed.markets.includes(market);
     document.getElementById('useAfter').checked=parsed.price_mode==='after';
     if(!runScreen())throw Error(document.getElementById('runErr').textContent);
+    interpretation.textContent=parsed.interpretation;
     document.getElementById('resultCard').scrollIntoView({behavior:'smooth',block:'start'});
-    msg.className='ok';msg.textContent='条件式を生成し、結果を表示しました';
+    msg.className='ok';msg.textContent='条件式を生成・検証し、結果を表示しました';
   }catch(e){msg.className='err';msg.textContent='生成失敗: '+e.message;}
   finally{btn.disabled=false;}
 }
@@ -664,6 +683,7 @@ function saveKey() {
 (async () => {
   document.getElementById('apiProvider').value = localStorage.getItem('api_provider') || 'openai';
   setProvider(document.getElementById('apiProvider').value);
+  document.getElementById('nlExamples').innerHTML=NLExamples.map((entry,i)=>`<div class="cond"><button class="small" onclick="useNaturalExample(${i})">${escapeHTML(entry.text)}</button><code>${escapeHTML(entry.expression)}</code><p class="hint">${escapeHTML(entry.interpretation)}</p></div>`).join('');
   document.getElementById('presets').innerHTML = PRESETS.map(([name,desc],i)=>`<div class="cond"><button class="small" onclick="usePreset(${i})">${name}</button><p class="hint">${desc}</p></div>`).join('');
   setExpression('weekly_up(4)');
   document.getElementById('expressionHelp').textContent=ScreenScript.help;
