@@ -33,6 +33,8 @@ assert.equal(S.evaluate({industry:'Insurance - Life'},'banking == 1'),false);
 assert.equal(S.evaluate({},'banking == 0'),false);
 const out=expression=>({expression,interpretation:'テスト',markets:[],price_mode:'close',unhandled:[]});
 assert.throws(()=>V.validate(out('monthly_up_count(12)>=6'),'過去一年上昇期間が多い'),/7/);
+assert.throws(()=>V.validate(out('monthly_up_count(6)>0'),'半年間毎月上昇'),/連続判定/);
+assert.throws(()=>V.validate(out('weekly_up(4)'),'直近4週すべて下落'),/連続判定/);
 assert.throws(()=>V.validate(out('weekly_up(24)'),'半年間毎月上昇'),/monthly/);
 assert.throws(()=>V.validate(out('monthly_up_count(6)>3'),'過去一年上昇期間が多い'),/12/);
 assert.throws(()=>V.validate(out('sector == "Financial Services" && industry == "銀行業"'),'銀行関連'),/banking/);

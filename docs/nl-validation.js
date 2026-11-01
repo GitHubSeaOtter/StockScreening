@@ -34,7 +34,8 @@
       if(unit==='weekly')periods=horizon.unit==='month'?Math.round(horizon.n*52/12):horizon.unit==='week'?horizon.n:undefined;
       if(unit==='daily')periods=horizon.unit==='month'?horizon.n*21:horizon.unit==='week'?horizon.n*5:horizon.n;
     }
-    return {unit,periods,count,bank:/銀行関連|銀行銘柄|銀行株|銀行業|銀行セクター|^銀行(?:を|以外|$)/.test(value)&&!/33業種|JPX/.test(value)};
+    const up=/上昇|値上がり/.test(value),down=/下落|値下がり/.test(value);
+    return {unit,periods,count,direction:up&&!down?'up':down&&!up?'down':null,bank:/銀行関連|銀行銘柄|銀行株|銀行業|銀行セクター|^銀行(?:を|以外|$)/.test(value)&&!/33業種|JPX/.test(value)};
   }
   function validate(parsed,text){
     if(!parsed||typeof parsed.expression!=='string'||typeof parsed.interpretation!=='string'||!parsed.interpretation.trim()||
@@ -47,6 +48,12 @@
     if(expected.unit){
       const relevant=info.calls.filter(c=>c.name.startsWith(expected.unit+'_'));
       if(!relevant.length)throw Error('この文章は '+expected.unit+' 単位で比較してください。週と月を置き換えないでください');
+      if(expected.direction){
+        const allowed=expected.count?[expected.direction+'_count',expected.direction==='up'?'gain_count':'loss_count']:
+          [expected.direction,expected.direction==='up'?'min_gain':'max_gain'];
+        if(!relevant.some(c=>allowed.includes(c.name.slice(expected.unit.length+1))))
+          throw Error(expected.count?'上昇/下落の方向に合った回数関数を使ってください':'毎期間の連続判定には _up / _down、または _min_gain / _max_gain を使ってください。一部の期間だけでは不成立です');
+      }
       if(expected.periods&&!relevant.some(c=>c.args[0]===expected.periods))throw Error('この文章の比較期間数は '+expected.periods+' です');
     }
     if(expected.count&&expected.periods&&/多[いく]|過半数|半分/.test(text)&&!(/上昇|値上がり/.test(text)&&/下落|値下がり/.test(text))){
